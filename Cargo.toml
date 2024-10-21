@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
-solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
-solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
-solana-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
-solana-program-runtime ={ git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
-solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-tpu-client-next = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-client = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-transaction-status = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-program-runtime ={ git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-rpc-client-api ={ git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
 
 jsonrpsee = {version = "=0.24.5", features = ["server", "http-client", "macros"]}
 curve25519-dalek = { version = "4.1.3" }
@@ -28,10 +28,10 @@ base64 = "0.22.1"
 
 
 [patch.crates-io]
-solana-program = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
-solana-curve25519 = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
-solana-zk-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
-solana-zk-token-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-program = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
+solana-curve25519 = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
+solana-zk-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
+solana-zk-token-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
