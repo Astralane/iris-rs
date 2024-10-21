@@ -1,0 +1,37 @@
+[package]
+name = "iris-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-program-runtime ={ git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git", branch = "master", default-features = false }
+
+jsonrpsee = {version = "=0.24.5", features = ["server", "http-client", "macros"]}
+curve25519-dalek = { version = "4.1.3" }
+tokio = "1.40.0"
+tokio-util = "0.7.12"
+dashmap = "5.5.3"
+bincode = "1.3.3"
+figment = {version = "0.10.19", features = ["env"]}
+serde_json = "1.0.129"
+serde = { version = "1.0.188", features = ["derive"] }
+anyhow = "1.0.90"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+dotenv = "0.15.0"
+base64 = "0.22.1"
+
+
+[patch.crates-io]
+solana-program = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-curve25519 = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-zk-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-zk-token-sdk = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
