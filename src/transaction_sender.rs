@@ -1,18 +1,17 @@
 use crate::store::TransactionData;
+use crate::Config;
 use jsonrpsee::core::async_trait;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::signature::Keypair;
+use solana_sdk::signature::{read_keypair_file, Signer};
 use solana_tpu_client_next::connection_workers_scheduler::ConnectionWorkersSchedulerConfig;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
-use tracing_subscriber::fmt::time::FormatTime;
+use tracing::{error, info};
 
 #[async_trait]
 pub trait TxnSender: Send + Sync {
@@ -27,22 +26,46 @@ pub struct TpuClientNextSender {
 }
 
 impl TpuClientNextSender {
-    pub async fn new(rpc: RpcClient, websocket_url: String, identity: Option<Keypair>) -> Self {
+    pub async fn new(config: Config) -> Self {
         let cancel = CancellationToken::new();
-        let leader_updater = create_leader_updater(Arc::new(rpc), websocket_url, None)
+        let Config {
+            ws_url,
+            rpc_url,
+            num_connections,
+            skip_check_transaction_age,
+            worker_channel_size,
+            max_reconnect_attempts,
+            identity_keypair_file,
+            lookahead_slots,
+            ..
+        } = config;
+
+        let rpc = RpcClient::new(rpc_url.to_owned());
+        let leader_updater = create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None)
             .await
             .expect("Leader updates was successfully created");
+
+        //read identity keypair from file
+        let stake_identity = identity_keypair_file
+            .as_ref()
+            .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"));
+
+        info!(
+            "Identity keypair: {:?}",
+            stake_identity.as_ref().map(|k| k.pubkey().to_string())
+        );
+
         let (transaction_sender, transaction_receiver) = mpsc::channel(1000);
         let (txn_batch_sender, txn_batch_receiver) = mpsc::channel(1000);
         let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let config = ConnectionWorkersSchedulerConfig {
             bind,
-            num_connections: 50,
-            skip_check_transaction_age: true,
-            worker_channel_size: 50,
-            max_reconnect_attempts: 10,
-            stake_identity: identity,
-            lookahead_slots: 20,
+            num_connections,
+            skip_check_transaction_age,
+            worker_channel_size,
+            max_reconnect_attempts,
+            stake_identity,
+            lookahead_slots,
         };
         let cancel_ = cancel.clone();
         let conn_handle = tokio::spawn(async move {
@@ -66,6 +89,12 @@ impl TpuClientNextSender {
             cancel,
             transaction_sender,
         }
+    }
+
+    pub async fn shutdown(self) {
+        self.cancel.cancel();
+        let _ = self.conn_handle.await;
+        let _ = self.tx_recv_handle.await;
     }
 
     pub async fn transaction_aggregation_loop(
@@ -93,7 +122,6 @@ impl TpuClientNextSender {
                 error!("Failed to send transactions batch: {:?}", e);
             }
             buffer.clear();
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 }

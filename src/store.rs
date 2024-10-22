@@ -1,4 +1,3 @@
-use crate::rpc::RequestMetadata;
 use dashmap::DashMap;
 use solana_sdk::transaction::VersionedTransaction;
 use std::sync::Arc;
@@ -12,7 +11,6 @@ pub struct TransactionData {
     pub sent_at: Instant,
     pub retry_count: usize,
     pub max_retries: usize,
-    pub request_metadata: Option<RequestMetadata>,
 }
 
 pub trait TransactionStore: Send + Sync {

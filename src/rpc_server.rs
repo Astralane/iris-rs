@@ -1,4 +1,4 @@
-use crate::rpc::{IrisRpcServer, RequestMetadata};
+use crate::rpc::IrisRpcServer;
 use crate::store::{TransactionData, TransactionStore};
 use crate::transaction_sender::TxnSender;
 use crate::vendor::solana_rpc::decode_and_deserialize;
@@ -39,7 +39,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
         &self,
         txn: String,
         params: RpcSendTransactionConfig,
-        request_metadata: Option<RequestMetadata>,
     ) -> RpcResult<String> {
         let sent_at = Instant::now();
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
@@ -70,7 +69,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
             sent_at,
             retry_count: 0,
             max_retries: 0,
-            request_metadata,
         };
         self.txn_sender.send_transaction(transaction).await;
         Ok(signature)
