@@ -42,6 +42,7 @@ pub struct Config {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
+    env_logger::init();
     //setup tracing
     tracing::subscriber::set_global_default(
         tracing_subscriber::fmt()
