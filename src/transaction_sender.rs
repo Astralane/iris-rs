@@ -41,9 +41,14 @@ impl TpuClientNextSender {
         } = config;
 
         let rpc = RpcClient::new(rpc_url.to_owned());
-        let leader_updater = create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None)
-            .await
-            .expect("Leader updates was successfully created");
+        let leader_updater_res = create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None)
+            .await;
+
+        if let Err(e) = leader_updater_res{
+            error!("Failed to create leader updater: {:?}", e);
+            panic!("Failed to create leader updater");
+        }
+        let leader_updater = leader_updater_res.unwrap();
 
         //read identity keypair from file
         let stake_identity = identity_keypair_file
@@ -67,19 +72,23 @@ impl TpuClientNextSender {
             stake_identity,
             lookahead_slots,
         };
-        let cancel_ = cancel.clone();
+        let cancel_cl = cancel.clone();
         let conn_handle = tokio::spawn(async move {
-            let _ = ConnectionWorkersScheduler::run(
+            let result = ConnectionWorkersScheduler::run(
                 config,
                 leader_updater,
                 txn_batch_receiver,
-                cancel_,
-            );
+                cancel_cl.clone(),
+            ).await;
+            if let Err(e) = result {
+                error!("Connection workers scheduler failed: {:?}", e);
+                cancel_cl.cancel();
+            }
         });
 
-        let cancel_ = cancel.clone();
+        let cancel_cl = cancel.clone();
         let tx_recv_handle = tokio::spawn(async move {
-            Self::transaction_aggregation_loop(transaction_receiver, txn_batch_sender, cancel_)
+            Self::transaction_aggregation_loop(transaction_receiver, txn_batch_sender, cancel_cl)
                 .await;
         });
 

@@ -22,6 +22,7 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
+    #[serde(default)]
     identity_keypair_file: Option<String>,
     max_retries: usize,
     //The number of connections to be maintained by the scheduler.
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         .build(address)
         .await
         .unwrap();
+    info!("server starting in {:?}", address);
     let server_hdl = server.start(iris.into_rpc());
     server_hdl.stopped().await;
     Ok(())
