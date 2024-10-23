@@ -7,7 +7,7 @@ use solana_tpu_client_next::connection_workers_scheduler::ConnectionWorkersSched
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -37,14 +37,15 @@ impl TpuClientNextSender {
             max_reconnect_attempts,
             identity_keypair_file,
             lookahead_slots,
+            bind,
             ..
         } = config;
 
         let rpc = RpcClient::new(rpc_url.to_owned());
-        let leader_updater_res = create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None)
-            .await;
+        let leader_updater_res =
+            create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None).await;
 
-        if let Err(e) = leader_updater_res{
+        if let Err(e) = leader_updater_res {
             error!("Failed to create leader updater: {:?}", e);
             panic!("Failed to create leader updater");
         }
@@ -62,7 +63,6 @@ impl TpuClientNextSender {
 
         let (transaction_sender, transaction_receiver) = mpsc::channel(1000);
         let (txn_batch_sender, txn_batch_receiver) = mpsc::channel(1000);
-        let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let config = ConnectionWorkersSchedulerConfig {
             bind,
             num_connections,
@@ -79,7 +79,8 @@ impl TpuClientNextSender {
                 leader_updater,
                 txn_batch_receiver,
                 cancel_cl.clone(),
-            ).await;
+            )
+            .await;
             if let Err(e) = result {
                 error!("Connection workers scheduler failed: {:?}", e);
                 cancel_cl.cancel();

@@ -22,6 +22,7 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
+    bind: SocketAddr,
     #[serde(default)]
     identity_keypair_file: Option<String>,
     max_retries: usize,
