@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-solana-tpu-client-next = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
-solana-client = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
-solana-transaction-status = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
-solana-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
-solana-program-runtime ={ git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
-solana-rpc-client-api ={ git = "https://github.com/Astralane/agave.git", branch = "unfair-send", default-features = false }
+solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-client = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-sdk = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-program-runtime ={ git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-quic-client = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-connection-cache = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 
 jsonrpsee = {version = "=0.24.5", features = ["server", "http-client", "macros"]}
 curve25519-dalek = { version = "4.1.3" }
@@ -21,18 +23,19 @@ bincode = "1.3.3"
 figment = {version = "0.10.19", features = ["env"]}
 serde_json = "1.0.129"
 serde = { version = "1.0.188", features = ["derive"] }
-anyhow = "1.0.90"
+anyhow = "1.0.91"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"
 base64 = "0.22.1"
+log = "0.4.22"
 
 
 [patch.crates-io]
-solana-program = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
-solana-curve25519 = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
-solana-zk-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
-solana-zk-token-sdk = { git = "https://github.com/Astralane/agave.git", branch = "unfair-send" }
+solana-program = { git = "https://github.com/anza-xyz/agave.git" }
+solana-curve25519 = { git = "https://github.com/anza-xyz/agave.git" }
+solana-zk-sdk = { git = "https://github.com/anza-xyz/agave.git" }
+solana-zk-token-sdk = { git = "https://github.com/anza-xyz/agave.git" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

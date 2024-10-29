@@ -22,6 +22,7 @@ pub struct TpuClientNextSender {
     conn_handle: tokio::task::JoinHandle<()>,
     tx_recv_handle: tokio::task::JoinHandle<()>,
     cancel: CancellationToken,
+    txn_batch_sender: mpsc::Sender<TransactionBatch>,
     pub transaction_sender: mpsc::Sender<TransactionData>,
 }
 
@@ -40,7 +41,6 @@ impl TpuClientNextSender {
             bind,
             ..
         } = config;
-
         let rpc = RpcClient::new(rpc_url.to_owned());
         let leader_updater_res =
             create_leader_updater(Arc::new(rpc), ws_url.to_owned(), None).await;
@@ -64,7 +64,7 @@ impl TpuClientNextSender {
         let (transaction_sender, transaction_receiver) = mpsc::channel(1000);
         let (txn_batch_sender, txn_batch_receiver) = mpsc::channel(1000);
         let config = ConnectionWorkersSchedulerConfig {
-            bind,
+            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
@@ -88,9 +88,14 @@ impl TpuClientNextSender {
         });
 
         let cancel_cl = cancel.clone();
+        let txn_batch_sender_cl= txn_batch_sender.clone();
         let tx_recv_handle = tokio::spawn(async move {
-            Self::transaction_aggregation_loop(transaction_receiver, txn_batch_sender, cancel_cl)
-                .await;
+            Self::transaction_aggregation_loop(
+                transaction_receiver,
+                txn_batch_sender_cl,
+                cancel_cl,
+            )
+            .await;
         });
 
         Self {
@@ -98,6 +103,7 @@ impl TpuClientNextSender {
             tx_recv_handle,
             cancel,
             transaction_sender,
+            txn_batch_sender,
         }
     }
 
@@ -117,6 +123,7 @@ impl TpuClientNextSender {
         let mut buffer = Vec::with_capacity(limit);
         loop {
             if cancel.is_cancelled() {
+                info!("finish aggregation loop");
                 return;
             }
             //fill buffer with transactions
@@ -139,6 +146,10 @@ impl TpuClientNextSender {
 #[async_trait]
 impl TxnSender for TpuClientNextSender {
     async fn send_transaction(&self, txn: TransactionData) {
+        info!(
+            "sending transaction {:?}",
+            txn.versioned_transaction.signatures[0].to_string()
+        );
         let resp = self.transaction_sender.send(txn).await;
         if let Err(e) = resp {
             error!("Failed to send transaction: {:?}", e);

@@ -1,6 +1,7 @@
+use crate::legacy_client::LegacyClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::transaction_sender::TpuClientNextSender;
+use crate::tpu_next_client::TpuClientNextSender;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
@@ -11,10 +12,11 @@ use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod legacy_client;
 mod rpc;
 mod rpc_server;
 mod store;
-mod transaction_sender;
+mod tpu_next_client;
 mod vendor;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
     info!("config: {:?}", config);
 
     let address = config.address;
+
     let tpu_sender_client = TpuClientNextSender::new(config).await;
+    //let legacy_client = LegacyClient::new(config);
     let iris = IrisRpcServerImpl::new(
         Arc::new(tpu_sender_client),
         Arc::new(store::TransactionStoreImpl::new()),

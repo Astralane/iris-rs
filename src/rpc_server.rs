@@ -1,6 +1,6 @@
 use crate::rpc::IrisRpcServer;
 use crate::store::{TransactionData, TransactionStore};
-use crate::transaction_sender::TxnSender;
+use crate::tpu_next_client::TxnSender;
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
