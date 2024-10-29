@@ -64,7 +64,7 @@ impl TpuClientNextSender {
         let (transaction_sender, transaction_receiver) = mpsc::channel(1000);
         let (txn_batch_sender, txn_batch_receiver) = mpsc::channel(1000);
         let config = ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
+            bind,
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
