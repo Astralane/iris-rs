@@ -7,7 +7,7 @@ use solana_tpu_client_next::connection_workers_scheduler::ConnectionWorkersSched
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -88,7 +88,7 @@ impl TpuClientNextSender {
         });
 
         let cancel_cl = cancel.clone();
-        let txn_batch_sender_cl= txn_batch_sender.clone();
+        let txn_batch_sender_cl = txn_batch_sender.clone();
         let tx_recv_handle = tokio::spawn(async move {
             Self::transaction_aggregation_loop(
                 transaction_receiver,

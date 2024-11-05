@@ -1,7 +1,6 @@
 use crate::legacy_client::LegacyClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::tpu_next_client::TpuClientNextSender;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
@@ -60,18 +59,18 @@ async fn main() -> anyhow::Result<()> {
 
     let address = config.address;
 
-    let tpu_sender_client = TpuClientNextSender::new(config).await;
-    //let legacy_client = LegacyClient::new(config);
+    // let tpu_sender_client = TpuClientNextSender::new(config).await;
+    let legacy_client = LegacyClient::new(config).await?;
     let iris = IrisRpcServerImpl::new(
-        Arc::new(tpu_sender_client),
+        Arc::new(legacy_client),
         Arc::new(store::TransactionStoreImpl::new()),
     );
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)
         .max_connections(1_000_000)
         .build(address)
-        .await
-        .unwrap();
+        .await?;
+
     info!("server starting in {:?}", address);
     let server_hdl = server.start(iris.into_rpc());
     server_hdl.stopped().await;

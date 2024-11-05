@@ -1,23 +1,28 @@
 use crate::store::TransactionData;
 use crate::tpu_next_client::TxnSender;
 use crate::Config;
+use anyhow::anyhow;
 use jsonrpsee::core::async_trait;
-use log::info;
+use log::{info, warn};
 use solana_client::connection_cache::ConnectionCache;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
 use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_tpu_client_next::leader_updater::{create_leader_updater, LeaderUpdater};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::timeout;
 use tracing::error;
 
 pub struct LegacyClient {
-    connection_cache: Arc<ConnectionCache>,
-    rpc: Arc<RpcClient>,
+    txn_sender: mpsc::Sender<TransactionData>,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl LegacyClient {
-    pub fn new(config: Config) -> Self {
+    pub async fn new(config: Config) -> anyhow::Result<Self> {
         let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
         let identity_keypair = config
             .identity_keypair_file
@@ -32,9 +37,59 @@ impl LegacyClient {
             Some((&identity_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
             None, // not used as far as I can tell
         ));
-        LegacyClient {
-            connection_cache,
-            rpc,
+        let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
+            .await
+            .map_err(|e| anyhow!(e))?;
+
+        let (txn_sender, txn_receiver) = mpsc::channel(16);
+
+        let handle = tokio::spawn(Self::run(
+            connection_cache.clone(),
+            txn_receiver,
+            leader_updater,
+            config.lookahead_slots,
+        ));
+
+        Ok(Self { txn_sender, handle })
+    }
+
+    pub async fn run(
+        connection_cache: Arc<ConnectionCache>,
+        mut txn_receiver: mpsc::Receiver<TransactionData>,
+        leader_updater: Box<dyn LeaderUpdater>,
+        lookahead_slots: u64,
+    ) {
+        loop {
+            if let Some(txn) = txn_receiver.recv().await {
+                let leaders = leader_updater.next_leaders(lookahead_slots);
+                for leader in leaders {
+                    let connection_cache = connection_cache.clone();
+                    let wire_transaction = txn.wire_transaction.clone();
+                    tokio::spawn(async move {
+                        let conn = connection_cache.get_nonblocking_connection(&leader);
+                        if let Ok(e) = timeout(
+                            Duration::from_millis(500),
+                            conn.send_data(&wire_transaction),
+                        )
+                        .await
+                        {
+                            if let Err(e) = e {
+                                error!("Failed to send transaction to leader TRANSPORT_ERROR {:?}: {:?}", leader, e);
+                            } else {
+                                info!("Successfully sent transaction to leader: {:?}", leader);
+                            }
+                        } else {
+                            warn!(
+                                "Failed to send transaction to leader TIMEOUT: {:?}:",
+                                leader
+                            );
+                        }
+                    });
+                }
+            } else {
+                warn!("NO SENDERS`: shutting down.");
+                break;
+            }
         }
     }
 }
@@ -42,17 +97,13 @@ impl LegacyClient {
 #[async_trait]
 impl TxnSender for LegacyClient {
     async fn send_transaction(&self, txn: TransactionData) {
-        let tpu_quick = "147.28.226.99:8009".parse().unwrap();
         info!(
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
-        let conn = self.connection_cache.get_nonblocking_connection(&tpu_quick);
-        let wire_tx = txn.wire_transaction;
-        let result = conn.send_data(wire_tx.as_ref()).await;
-        if let Err(ref e) = result {
-            error!("Failed to send transaction: {:?}", e);
+        let r = self.txn_sender.send(txn).await;
+        if let Err(e) = r {
+            error!("Failed to send transaction over channel: {:?}", e);
         }
-        info!("Transaction sent {:?}", result);
     }
 }
