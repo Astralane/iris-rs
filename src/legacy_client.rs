@@ -59,6 +59,7 @@ impl LegacyClient {
         leader_updater: Box<dyn LeaderUpdater>,
         lookahead_slots: u64,
     ) {
+        let MAX_RETRIES = 10;
         loop {
             if let Some(txn) = txn_receiver.recv().await {
                 let leaders = leader_updater.next_leaders(lookahead_slots);
@@ -66,23 +67,26 @@ impl LegacyClient {
                     let connection_cache = connection_cache.clone();
                     let wire_transaction = txn.wire_transaction.clone();
                     tokio::spawn(async move {
-                        let conn = connection_cache.get_nonblocking_connection(&leader);
-                        if let Ok(e) = timeout(
-                            Duration::from_millis(500),
-                            conn.send_data(&wire_transaction),
-                        )
-                        .await
-                        {
-                            if let Err(e) = e {
-                                error!("Failed to send transaction to leader TRANSPORT_ERROR {:?}: {:?}", leader, e);
+                        for _ in 0..MAX_RETRIES {
+                            let conn = connection_cache.get_nonblocking_connection(&leader);
+                            if let Ok(e) = timeout(
+                                Duration::from_millis(500),
+                                conn.send_data(&wire_transaction),
+                            )
+                                .await
+                            {
+                                if let Err(e) = e {
+                                    error!("Failed to send transaction to leader TRANSPORT_ERROR {:?}: {:?}", leader, e);
+                                } else {
+                                    info!("Successfully sent transaction to leader: {:?}", leader);
+                                    break;
+                                }
                             } else {
-                                info!("Successfully sent transaction to leader: {:?}", leader);
+                                warn!(
+                                    "Failed to send transaction to leader TIMEOUT: {:?}:",
+                                    leader
+                                );
                             }
-                        } else {
-                            warn!(
-                                "Failed to send transaction to leader TIMEOUT: {:?}:",
-                                leader
-                            );
                         }
                     });
                 }

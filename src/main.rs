@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(legacy_client),
         Arc::new(store::TransactionStoreImpl::new()),
     );
+
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)
         .max_connections(1_000_000)
