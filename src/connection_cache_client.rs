@@ -4,8 +4,10 @@ use log::{info, warn};
 use solana_client::connection_cache::ConnectionCache;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
+use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
+use solana_transaction_status::UiTransactionEncoding;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -46,7 +48,18 @@ impl ConnectionCacheClient {
                 let Some(legacy) = transaction.into_legacy_transaction() else {
                     return;
                 };
-                let resp = rpc.send_transaction(&legacy).await;
+                let resp = rpc
+                    .send_transaction_with_config(
+                        &legacy,
+                        RpcSendTransactionConfig {
+                            skip_preflight: true,
+                            preflight_commitment: None,
+                            encoding: Some(UiTransactionEncoding::Base64),
+                            max_retries: None,
+                            min_context_slot: None,
+                        },
+                    )
+                    .await;
                 if let Err(e) = resp {
                     error!(
                         "Failed to send transaction to friendly rpc: {:?} {:?}",

@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-mod leader_updater;
 mod connection_cache_client;
+mod leader_updater;
 mod rpc;
 mod rpc_server;
 mod store;
@@ -31,13 +31,10 @@ pub struct Config {
     ws_url: String,
     address: SocketAddr,
     bind: SocketAddr,
-    #[serde(default)]
     identity_keypair_file: Option<String>,
     //forwards to known rpcs
-    #[serde(default)]
     friendly_rpcs: Vec<String>,
     //should enable forwards to leader
-    #[serde(default="default_true")]
     enable_leader_forwards: bool,
     max_retries: usize,
     //The number of connections to be maintained by the scheduler.
