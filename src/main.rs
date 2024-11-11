@@ -34,8 +34,10 @@ pub struct Config {
     #[serde(default)]
     identity_keypair_file: Option<String>,
     //forwards to known rpcs
+    #[serde(default)]
     friendly_rpcs: Vec<String>,
     //should enable forwards to leader
+    #[serde(default="default_true")]
     enable_leader_forwards: bool,
     max_retries: usize,
     //The number of connections to be maintained by the scheduler.
@@ -50,6 +52,10 @@ pub struct Config {
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
     lookahead_slots: u64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[tokio::main]
