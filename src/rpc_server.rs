@@ -1,6 +1,6 @@
 use crate::rpc::IrisRpcServer;
 use crate::store::{TransactionData, TransactionStore};
-use crate::tpu_next_client::TxnSender;
+use crate::tx_sender::SendTransactionClient;
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::time::Instant;
 
 pub struct IrisRpcServerImpl {
-    pub txn_sender: Arc<dyn TxnSender>,
+    pub txn_sender: Arc<dyn SendTransactionClient>,
     pub store: Arc<dyn TransactionStore>,
 }
 
@@ -25,7 +25,10 @@ pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
 }
 
 impl IrisRpcServerImpl {
-    pub fn new(txn_sender: Arc<dyn TxnSender>, store: Arc<dyn TransactionStore>) -> Self {
+    pub fn new(
+        txn_sender: Arc<dyn SendTransactionClient>,
+        store: Arc<dyn TransactionStore>,
+    ) -> Self {
         Self { txn_sender, store }
     }
 }
@@ -70,7 +73,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
             retry_count: 0,
             max_retries: 0,
         };
-        self.txn_sender.send_transaction(transaction).await;
+        self.txn_sender.send_transaction(transaction);
         Ok(signature)
     }
 }

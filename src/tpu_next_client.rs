@@ -1,22 +1,19 @@
 use crate::store::TransactionData;
+use crate::tx_sender::SendTransactionClient;
 use crate::Config;
 use jsonrpsee::core::async_trait;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Signer};
-use solana_tpu_client_next::connection_workers_scheduler::ConnectionWorkersSchedulerConfig;
+use solana_tpu_client_next::connection_workers_scheduler::{
+    ConnectionWorkersSchedulerConfig, Fanout,
+};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
-use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-
-#[async_trait]
-pub trait TxnSender: Send + Sync {
-    async fn send_transaction(&self, txn: TransactionData);
-}
 
 pub struct TpuClientNextSender {
     conn_handle: tokio::task::JoinHandle<()>,
@@ -70,7 +67,10 @@ impl TpuClientNextSender {
             worker_channel_size,
             max_reconnect_attempts,
             stake_identity,
-            lookahead_slots,
+            leaders_fanout: Fanout {
+                send: lookahead_slots as usize,
+                connect: lookahead_slots as usize,
+            },
         };
         let cancel_cl = cancel.clone();
         let conn_handle = tokio::spawn(async move {
@@ -143,14 +143,13 @@ impl TpuClientNextSender {
     }
 }
 
-#[async_trait]
-impl TxnSender for TpuClientNextSender {
-    async fn send_transaction(&self, txn: TransactionData) {
+impl SendTransactionClient for TpuClientNextSender {
+    fn send_transaction(&self, txn: TransactionData) {
         info!(
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
-        let resp = self.transaction_sender.send(txn).await;
+        let resp = self.transaction_sender.blocking_send(txn);
         if let Err(e) = resp {
             error!("Failed to send transaction: {:?}", e);
         }

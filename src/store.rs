@@ -39,7 +39,6 @@ impl TransactionStore for TransactionStoreImpl {
         self.transactions.contains_key(signature)
     }
     fn add_transaction(&self, transaction: TransactionData) {
-        let start = Instant::now();
         if let Some(signature) = get_signature(&transaction) {
             if self.transactions.contains_key(&signature) {
                 return;
