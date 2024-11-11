@@ -18,6 +18,7 @@ pub struct ConnectionCacheClient {
     leader_updater: Mutex<Box<dyn LeaderUpdater>>,
     lookahead_slots: u64,
     friendly_rpcs: Vec<Arc<RpcClient>>,
+    enable_leader_forwards: bool,
 }
 
 impl ConnectionCacheClient {
@@ -26,12 +27,14 @@ impl ConnectionCacheClient {
         leader_updater: Box<dyn LeaderUpdater>,
         lookahead_slots: u64,
         friendly_rpcs: Vec<Arc<RpcClient>>,
+        enable_leader_forwards: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             connection_cache,
             leader_updater: Mutex::new(leader_updater),
             lookahead_slots,
             friendly_rpcs,
+            enable_leader_forwards,
         })
     }
 
@@ -63,6 +66,9 @@ impl SendTransactionClient for ConnectionCacheClient {
             txn.versioned_transaction.signatures[0].to_string()
         );
         self.forward_to_friendly_clients(txn.versioned_transaction.clone());
+        if !self.enable_leader_forwards {
+            return;
+        }
         let leaders_lock = self.leader_updater.lock();
         let leaders = leaders_lock
             .unwrap()

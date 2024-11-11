@@ -33,7 +33,10 @@ pub struct Config {
     bind: SocketAddr,
     #[serde(default)]
     identity_keypair_file: Option<String>,
+    //forwards to known rpcs
     friendly_rpcs: Vec<String>,
+    //should enable forwards to leader
+    enable_leader_forwards: bool,
     max_retries: usize,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
@@ -97,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
         leader_updater,
         config.lookahead_slots,
         friendly_rpcs,
+        config.enable_leader_forwards,
     )
     .await?;
 
