@@ -1,4 +1,4 @@
-use crate::legacy_client::ConnectionCacheClient;
+use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use anyhow::anyhow;
@@ -17,7 +17,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod leader_updater;
-mod legacy_client;
+mod connection_cache_client;
 mod rpc;
 mod rpc_server;
 mod store;
