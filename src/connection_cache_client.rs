@@ -22,9 +22,6 @@ pub struct ConnectionCacheClient {
     enable_leader_forwards: bool,
 }
 
-impl ConnectionCacheClient {
-}
-
 impl SendTransactionClient for ConnectionCacheClient {
     fn send_transaction(&self, txn: TransactionData) {
         info!(

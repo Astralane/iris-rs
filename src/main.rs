@@ -95,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow!(e))?;
 
     let client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
+        log::info!("Using TpuClientNextSender");
         Arc::new(TpuClientNextSender::create_client(
             tokio::runtime::Handle::current(),
             leader_updater,
@@ -103,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
             identity_keypair,
         ))
     } else {
+        log::info!("Using ConnectionCacheClient");
         Arc::new(ConnectionCacheClient::create_client(
             tokio::runtime::Handle::current(),
             leader_updater,
