@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"
 base64 = "0.22.1"
 log = "0.4.22"
+reqwest = { version = "0.12.9", features = ["json"] }
 
 
 [patch.crates-io]

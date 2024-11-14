@@ -1,5 +1,6 @@
 use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
+use crate::rpc_forwards::RpcForwards;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
 use crate::transaction_client::{CreateClient, SendTransactionClient};
@@ -19,6 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 mod connection_cache_client;
 mod rpc;
+mod rpc_forwards;
 mod rpc_server;
 mod store;
 mod tpu_next_client;
@@ -34,6 +36,8 @@ pub struct Config {
     identity_keypair_file: Option<String>,
     //forwards to known rpcs
     friendly_rpcs: Vec<String>,
+    //jito Block engine urls
+    jito_urls: Vec<String>,
     //should enable forwards to leader
     enable_leader_forwards: bool,
     max_retries: usize,
@@ -108,7 +112,20 @@ async fn main() -> anyhow::Result<()> {
         ))
     };
 
-    let iris = IrisRpcServerImpl::new(client, Arc::new(store::TransactionStoreImpl::new()));
+    let forwarder = RpcForwards::new(
+        tokio::runtime::Handle::current(),
+        config
+            .friendly_rpcs
+            .iter()
+            .map(|rpc_url| Arc::new(RpcClient::new(rpc_url.to_owned())))
+            .collect(),
+        config.jito_urls,
+    );
+    let iris = IrisRpcServerImpl::new(
+        client,
+        Arc::new(store::TransactionStoreImpl::new()),
+        Arc::new(forwarder),
+    );
 
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)

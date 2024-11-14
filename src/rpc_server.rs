@@ -1,4 +1,5 @@
 use crate::rpc::IrisRpcServer;
+use crate::rpc_forwards::RpcForwards;
 use crate::store::{TransactionData, TransactionStore};
 use crate::transaction_client::SendTransactionClient;
 use crate::vendor::solana_rpc::decode_and_deserialize;
@@ -14,6 +15,7 @@ use tokio::time::Instant;
 pub struct IrisRpcServerImpl {
     pub txn_sender: Arc<dyn SendTransactionClient>,
     pub store: Arc<dyn TransactionStore>,
+    pub forwarder: Arc<RpcForwards>,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -28,8 +30,13 @@ impl IrisRpcServerImpl {
     pub fn new(
         txn_sender: Arc<dyn SendTransactionClient>,
         store: Arc<dyn TransactionStore>,
+        rpc_forwards: Arc<RpcForwards>,
     ) -> Self {
-        Self { txn_sender, store }
+        Self {
+            txn_sender,
+            store,
+            forwarder: rpc_forwards,
+        }
     }
 }
 #[async_trait]
@@ -73,6 +80,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
             retry_count: 0,
             max_retries: 0,
         };
+        self.forwarder.forward_to_known_rpcs(transaction.clone());
         self.txn_sender.send_transaction(transaction);
         Ok(signature)
     }

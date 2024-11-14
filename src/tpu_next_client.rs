@@ -69,7 +69,11 @@ fn spawn_tpu_client_send_txs(
             ));
         }
     });
-    TpuClientNextSender { sender, cancel, enable_leader_sends }
+    TpuClientNextSender {
+        sender,
+        cancel,
+        enable_leader_sends,
+    }
 }
 
 impl SendTransactionClient for TpuClientNextSender {
