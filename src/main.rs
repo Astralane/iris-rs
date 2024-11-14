@@ -1,28 +1,28 @@
 use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
+use crate::tpu_next_client::TpuClientNextSender;
+use crate::transaction_client::{CreateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
 use serde::{Deserialize, Serialize};
-use solana_client::connection_cache::ConnectionCache;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod connection_cache_client;
-mod leader_updater;
 mod rpc;
 mod rpc_server;
 mod store;
 mod tpu_next_client;
-mod tx_sender;
+mod transaction_client;
 mod vendor;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +49,7 @@ pub struct Config {
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
     lookahead_slots: u64,
+    use_tpu_client_next: bool,
 }
 
 fn default_true() -> bool {
@@ -71,11 +72,11 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
     info!("config: {:?}", config);
 
-    let friendly_rpcs = config
-        .friendly_rpcs
-        .iter()
-        .map(|rpc_url| Arc::new(RpcClient::new(rpc_url.to_owned())))
-        .collect();
+    // let friendly_rpcs = config
+    //     .friendly_rpcs
+    //     .iter()
+    //     .map(|rpc_url| Arc::new(RpcClient::new(rpc_url.to_owned())))
+    //     .collect();
 
     let address = config.address;
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
@@ -85,32 +86,29 @@ async fn main() -> anyhow::Result<()> {
         .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"))
         .unwrap_or(Keypair::new());
 
-    let connection_cache = Arc::new(ConnectionCache::new_with_client_options(
-        "iris",
-        24,
-        None, // created if none specified
-        Some((&identity_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
-        None, // not used as far as I can tell
-    ));
-
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
         .map_err(|e| anyhow!(e))?;
 
-    // let tpu_sender_client = TpuClientNextSender::new(config).await;
-    let legacy_client = ConnectionCacheClient::new(
-        connection_cache,
-        leader_updater,
-        config.lookahead_slots,
-        friendly_rpcs,
-        config.enable_leader_forwards,
-    )
-    .await?;
+    let client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
+        Arc::new(TpuClientNextSender::create_client(
+            tokio::runtime::Handle::current(),
+            leader_updater,
+            config.enable_leader_forwards,
+            config.lookahead_slots,
+            identity_keypair,
+        ))
+    } else {
+        Arc::new(ConnectionCacheClient::create_client(
+            tokio::runtime::Handle::current(),
+            leader_updater,
+            config.enable_leader_forwards,
+            config.lookahead_slots,
+            identity_keypair,
+        ))
+    };
 
-    let iris = IrisRpcServerImpl::new(
-        Arc::new(legacy_client),
-        Arc::new(store::TransactionStoreImpl::new()),
-    );
+    let iris = IrisRpcServerImpl::new(client, Arc::new(store::TransactionStoreImpl::new()));
 
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)

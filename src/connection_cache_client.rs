@@ -1,75 +1,58 @@
 use crate::store::TransactionData;
-use crate::tx_sender::SendTransactionClient;
+use crate::transaction_client::{CreateClient, SendTransactionClient};
 use log::{info, warn};
 use solana_client::connection_cache::ConnectionCache;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
-use solana_rpc_client_api::config::RpcSendTransactionConfig;
-use solana_sdk::transaction::VersionedTransaction;
+use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
-use solana_transaction_status::UiTransactionEncoding;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::time::timeout;
 use tracing::error;
 
 const MAX_RETRIES: u32 = 10;
 
 pub struct ConnectionCacheClient {
+    runtime: Handle,
     connection_cache: Arc<ConnectionCache>,
     leader_updater: Mutex<Box<dyn LeaderUpdater>>,
     lookahead_slots: u64,
-    friendly_rpcs: Vec<Arc<RpcClient>>,
     enable_leader_forwards: bool,
 }
 
 impl ConnectionCacheClient {
-    pub async fn new(
-        connection_cache: Arc<ConnectionCache>,
-        leader_updater: Box<dyn LeaderUpdater>,
-        lookahead_slots: u64,
-        friendly_rpcs: Vec<Arc<RpcClient>>,
-        enable_leader_forwards: bool,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            connection_cache,
-            leader_updater: Mutex::new(leader_updater),
-            lookahead_slots,
-            friendly_rpcs,
-            enable_leader_forwards,
-        })
-    }
-
-    pub fn forward_to_friendly_clients(&self, transaction: VersionedTransaction) {
-        for rpc in self.friendly_rpcs.iter() {
-            let transaction = transaction.clone();
-            let rpc = rpc.clone();
-            tokio::spawn(async move {
-                let Some(legacy) = transaction.into_legacy_transaction() else {
-                    return;
-                };
-                let resp = rpc
-                    .send_transaction_with_config(
-                        &legacy,
-                        RpcSendTransactionConfig {
-                            skip_preflight: true,
-                            preflight_commitment: None,
-                            encoding: Some(UiTransactionEncoding::Base64),
-                            max_retries: None,
-                            min_context_slot: None,
-                        },
-                    )
-                    .await;
-                if let Err(e) = resp {
-                    error!(
-                        "Failed to send transaction to friendly rpc: {:?} {:?}",
-                        e,
-                        rpc.url()
-                    );
-                }
-            });
-        }
-    }
+    // pub fn forward_to_friendly_clients(&self, transaction: VersionedTransaction) {
+    //     for rpc in self.friendly_rpcs.iter() {
+    //         let transaction = transaction.clone();
+    //         let rpc = rpc.clone();
+    //         tokio::spawn(async move {
+    //             let Some(legacy) = transaction.into_legacy_transaction() else {
+    //                 return;
+    //             };
+    //             let resp = rpc
+    //                 .send_transaction_with_config(
+    //                     &legacy,
+    //                     RpcSendTransactionConfig {
+    //                         skip_preflight: true,
+    //                         preflight_commitment: None,
+    //                         encoding: Some(UiTransactionEncoding::Base64),
+    //                         max_retries: None,
+    //                         min_context_slot: None,
+    //                     },
+    //                 )
+    //                 .await;
+    //             if let Err(e) = resp {
+    //                 error!(
+    //                     "Failed to send transaction to friendly rpc: {:?} {:?}",
+    //                     e,
+    //                     rpc.url()
+    //                 );
+    //             }
+    //         });
+    //     }
+    // }
 }
 
 impl SendTransactionClient for ConnectionCacheClient {
@@ -78,7 +61,7 @@ impl SendTransactionClient for ConnectionCacheClient {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
-        self.forward_to_friendly_clients(txn.versioned_transaction.clone());
+        //self.forward_to_friendly_clients(txn.versioned_transaction.clone());
         if !self.enable_leader_forwards {
             return;
         }
@@ -89,7 +72,7 @@ impl SendTransactionClient for ConnectionCacheClient {
         for leader in leaders {
             let connection_cache = self.connection_cache.clone();
             let wire_transaction = txn.wire_transaction.clone();
-            tokio::spawn(async move {
+            self.runtime.spawn(async move {
                 for _ in 0..MAX_RETRIES {
                     let conn = connection_cache.get_nonblocking_connection(&leader);
                     if let Ok(e) = timeout(
@@ -115,6 +98,31 @@ impl SendTransactionClient for ConnectionCacheClient {
                     }
                 }
             });
+        }
+    }
+}
+
+impl CreateClient for ConnectionCacheClient {
+    fn create_client(
+        runtime: Handle,
+        leader_updater: Box<dyn LeaderUpdater>,
+        enable_leader_forwards: bool,
+        lookahead_slots: u64,
+        validator_identity: Keypair,
+    ) -> Self {
+        let connection_cache = Arc::new(ConnectionCache::new_with_client_options(
+            "iris",
+            24,
+            None, // created if none specified
+            Some((&validator_identity, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
+            None, // not used as far as I can tell
+        ));
+        Self {
+            runtime,
+            connection_cache,
+            leader_updater: Mutex::new(leader_updater),
+            lookahead_slots,
+            enable_leader_forwards,
         }
     }
 }
