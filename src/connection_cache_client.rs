@@ -23,36 +23,6 @@ pub struct ConnectionCacheClient {
 }
 
 impl ConnectionCacheClient {
-    // pub fn forward_to_friendly_clients(&self, transaction: VersionedTransaction) {
-    //     for rpc in self.friendly_rpcs.iter() {
-    //         let transaction = transaction.clone();
-    //         let rpc = rpc.clone();
-    //         tokio::spawn(async move {
-    //             let Some(legacy) = transaction.into_legacy_transaction() else {
-    //                 return;
-    //             };
-    //             let resp = rpc
-    //                 .send_transaction_with_config(
-    //                     &legacy,
-    //                     RpcSendTransactionConfig {
-    //                         skip_preflight: true,
-    //                         preflight_commitment: None,
-    //                         encoding: Some(UiTransactionEncoding::Base64),
-    //                         max_retries: None,
-    //                         min_context_slot: None,
-    //                     },
-    //                 )
-    //                 .await;
-    //             if let Err(e) = resp {
-    //                 error!(
-    //                     "Failed to send transaction to friendly rpc: {:?} {:?}",
-    //                     e,
-    //                     rpc.url()
-    //                 );
-    //             }
-    //         });
-    //     }
-    // }
 }
 
 impl SendTransactionClient for ConnectionCacheClient {

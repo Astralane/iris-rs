@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 pub struct TpuClientNextSender {
+    runtime: Handle,
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
     cancel: CancellationToken,
     enable_leader_sends: bool,
@@ -70,6 +71,7 @@ fn spawn_tpu_client_send_txs(
         }
     });
     TpuClientNextSender {
+        runtime: runtime_handle,
         sender,
         cancel,
         enable_leader_sends,
@@ -83,9 +85,11 @@ impl SendTransactionClient for TpuClientNextSender {
             txn.versioned_transaction.signatures[0].to_string()
         );
         let txn_batch = TransactionBatch::new(vec![txn.wire_transaction]);
-        let resp = self.sender.blocking_send(txn_batch);
-        if let Err(e) = resp {
-            error!("Failed to send transaction: {:?}", e);
-        }
+        let sender = self.sender.clone();
+        self.runtime.spawn(async move {
+            if let Err(e) = sender.send(txn_batch).await {
+                error!("Failed to send transaction: {:?}", e);
+            }
+        });
     }
 }
