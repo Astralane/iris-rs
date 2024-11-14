@@ -76,12 +76,6 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
     info!("config: {:?}", config);
 
-    // let friendly_rpcs = config
-    //     .friendly_rpcs
-    //     .iter()
-    //     .map(|rpc_url| Arc::new(RpcClient::new(rpc_url.to_owned())))
-    //     .collect();
-
     let address = config.address;
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let identity_keypair = config
