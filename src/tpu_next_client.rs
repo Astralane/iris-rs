@@ -55,7 +55,7 @@ fn spawn_tpu_client_send_txs(
                 // to match MAX_CONNECTIONS from ConnectionCache
                 num_connections: 1024,
                 skip_check_transaction_age: true,
-                worker_channel_size: 64,
+                worker_channel_size: 128,
                 max_reconnect_attempts: 4,
                 leaders_fanout: Fanout {
                     connect: leader_forward_count as usize,

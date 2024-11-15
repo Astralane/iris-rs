@@ -9,13 +9,20 @@ use jsonrpsee::types::ErrorObjectOwned;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::time::Instant;
+use tracing::info;
+
+pub struct Stat {
+    pub tx_count: u64,
+}
 
 pub struct IrisRpcServerImpl {
     pub txn_sender: Arc<dyn SendTransactionClient>,
     pub store: Arc<dyn TransactionStore>,
     pub forwarder: Arc<dyn RpcForwardsClient>,
+    pub stats: AtomicU64
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -35,6 +42,7 @@ impl IrisRpcServerImpl {
         Self {
             txn_sender,
             store,
+            stats: AtomicU64::new(0),
             forwarder: rpc_forwards,
         }
     }
@@ -58,6 +66,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String> {
         let sent_at = Instant::now();
+        info!("transaction count {:?}", self.stats.fetch_add(1, Ordering::SeqCst));
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
         if !params.skip_preflight {
             return Err(invalid_request("running preflight check is not supported"));
