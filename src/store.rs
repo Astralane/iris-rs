@@ -49,7 +49,6 @@ impl TransactionStore for TransactionStoreImpl {
         }
     }
     fn get_signatures(&self) -> Vec<String> {
-        let start = Instant::now();
         let signatures = self
             .transactions
             .iter()

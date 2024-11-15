@@ -84,6 +84,9 @@ impl SendTransactionClient for TpuClientNextSender {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
+        if !self.enable_leader_sends {
+            return;
+        }
         let txn_batch = TransactionBatch::new(vec![txn.wire_transaction]);
         let sender = self.sender.clone();
         self.runtime.spawn(async move {

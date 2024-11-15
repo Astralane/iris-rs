@@ -19,6 +19,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod connection_cache_client;
+mod jito_sender;
 mod rpc;
 mod rpc_forwards;
 mod rpc_server;

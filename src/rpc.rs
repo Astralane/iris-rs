@@ -12,4 +12,6 @@ pub trait IrisRpc {
         txn: String,
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String>;
+    #[method(name = "sendBundle")]
+    async fn send_bundle(&self, bundle: Vec<String>) -> RpcResult<String>;
 }

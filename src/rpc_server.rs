@@ -1,5 +1,5 @@
 use crate::rpc::IrisRpcServer;
-use crate::rpc_forwards::RpcForwards;
+use crate::rpc_forwards::{RpcForwards, RpcForwardsClient};
 use crate::store::{TransactionData, TransactionStore};
 use crate::transaction_client::SendTransactionClient;
 use crate::vendor::solana_rpc::decode_and_deserialize;
@@ -15,7 +15,7 @@ use tokio::time::Instant;
 pub struct IrisRpcServerImpl {
     pub txn_sender: Arc<dyn SendTransactionClient>,
     pub store: Arc<dyn TransactionStore>,
-    pub forwarder: Arc<RpcForwards>,
+    pub forwarder: Arc<dyn RpcForwardsClient>,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -30,7 +30,7 @@ impl IrisRpcServerImpl {
     pub fn new(
         txn_sender: Arc<dyn SendTransactionClient>,
         store: Arc<dyn TransactionStore>,
-        rpc_forwards: Arc<RpcForwards>,
+        rpc_forwards: Arc<dyn RpcForwardsClient>,
     ) -> Self {
         Self {
             txn_sender,
@@ -42,9 +42,16 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "OK".to_string()
+        "Ok".to_string()
     }
 
+    async fn send_bundle(&self, bundle: Vec<String>) -> RpcResult<String> {
+        let resp = self.forwarder.forward_to_jito_clients(bundle).await;
+        match resp {
+            Ok(_) => Ok("Ok".to_string()),
+            Err(e) => Err(invalid_request(&e.to_string())),
+        }
+    }
     async fn send_transaction(
         &self,
         txn: String,
@@ -70,9 +77,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 }
             };
         let signature = versioned_transaction.signatures[0].to_string();
-        // if self.transaction_store.has_signature(&signature) {
-        //     return Ok(signature);
-        // }
         let transaction = TransactionData {
             wire_transaction,
             versioned_transaction,

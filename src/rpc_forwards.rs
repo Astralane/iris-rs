@@ -1,5 +1,7 @@
+use crate::jito_sender::send_bundle;
 use crate::store::TransactionData;
 use jsonrpsee::core::async_trait;
+use log::info;
 use reqwest::Client;
 use serde_json::json;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -17,6 +19,11 @@ pub struct RpcForwards {
     pub client: Client,
 }
 
+#[async_trait]
+pub trait RpcForwardsClient: Send + Sync {
+    async fn forward_to_known_rpcs(&self, tx: TransactionData);
+    async fn forward_to_jito_clients(&self, encoded_transaction: Vec<String>) -> anyhow::Result<String>;
+}
 impl RpcForwards {
     pub fn new(runtime: Handle, known_rpcs: Vec<Arc<RpcClient>>, jito_urls: Vec<String>) -> Self {
         Self {
@@ -26,7 +33,11 @@ impl RpcForwards {
             client: Client::new(),
         }
     }
-    pub fn forward_to_known_rpcs(&self, tx: TransactionData) {
+}
+
+#[async_trait]
+impl RpcForwardsClient for RpcForwards {
+    fn forward_to_known_rpcs(&self, tx: TransactionData) {
         for rpc in self.known_rpcs.iter() {
             let tx = tx.clone();
             let rpc = rpc.clone();
@@ -49,28 +60,23 @@ impl RpcForwards {
             });
         }
     }
-    pub fn forward_to_jito_clients(&self, encoded_transaction: String) {
+    async fn forward_to_jito_clients(
+        &self,
+        encoded_transaction: Vec<String>,
+    ) -> anyhow::Result<String> {
+        let encoded_transaction = encoded_transaction.clone();
+        let client = self.client.clone();
         for url in self.jito_urls.iter() {
-            let encoded_transaction = encoded_transaction.clone();
-            let client = self.client.clone();
-            let url = url.clone();
-            self.runtime.spawn(async move {
-                let body = json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "sendBundle",
-                    "params": [[encoded_transaction]]
-                });
-                let response = client.post(&url).json(&body).send().await;
-                if let Ok(response) = response {
-                    let status = response.status();
-                    if let Ok(body) = response.text().await {
-                        if !status.is_success() {
-                            error!("failed to send tx: {}", body);
-                        }
-                    }
-                }
-            });
+            let response = send_bundle(&client, &url, encoded_transaction.clone()).await;
+            if let Err(e) = response {
+                error!("Failed to send transaction to jito: {:?}", e);
+            } else {
+                info!(
+                    "Successfully sent transaction to jito {:}",
+                    response.unwrap()
+                );
+            }
         }
+        Ok("hehe".to_string())
     }
 }

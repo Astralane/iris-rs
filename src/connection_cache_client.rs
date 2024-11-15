@@ -28,7 +28,7 @@ impl SendTransactionClient for ConnectionCacheClient {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
-        //self.forward_to_friendly_clients(txn.versioned_transaction.clone());
+
         if !self.enable_leader_forwards {
             return;
         }
