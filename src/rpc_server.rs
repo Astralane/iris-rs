@@ -13,7 +13,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use metrics::counter;
 use tokio::time::Instant;
-use tracing::info;
 
 pub struct IrisRpcServerImpl {
     pub txn_sender: Arc<dyn SendTransactionClient>,

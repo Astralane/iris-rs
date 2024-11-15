@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use log::error;
 use metrics::counter;
-use solana_client::pubsub_client::{BlockSubscription, PubsubClient, SlotsSubscription};
+use solana_client::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -63,7 +63,7 @@ fn spawn_block_listener(
             show_rewards: Some(false),
             max_supported_transaction_version: Some(0),
         });
-        let Ok(mut block_subscribe) =
+        let Ok(block_subscribe) =
             PubsubClient::block_subscribe(&ws_url, RpcBlockSubscribeFilter::All, config.clone())
         else {
             error!("Error subscribing to block updates");

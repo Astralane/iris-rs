@@ -1,5 +1,4 @@
 use crate::store::TransactionData;
-use jsonrpsee::core::async_trait;
 use reqwest::Client;
 use serde_json::json;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -7,7 +6,6 @@ use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::Arc;
 use tokio::runtime::Handle;
-use tokio::task::JoinSet;
 use tracing::error;
 
 pub struct RpcForwards {
