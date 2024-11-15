@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+mod chain_listener;
 mod connection_cache_client;
 mod rpc;
 mod rpc_forwards;

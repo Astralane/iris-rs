@@ -30,6 +30,8 @@ dotenv = "0.15.0"
 base64 = "0.22.1"
 log = "0.4.22"
 reqwest = { version = "0.12.9", features = ["json"] }
+metrics = "0.24.0"
+metrics-exporter-prometheus = "0.16.0"
 
 
 [patch.crates-io]

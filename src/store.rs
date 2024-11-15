@@ -35,9 +35,6 @@ impl TransactionStoreImpl {
 }
 
 impl TransactionStore for TransactionStoreImpl {
-    fn has_signature(&self, signature: &str) -> bool {
-        self.transactions.contains_key(signature)
-    }
     fn add_transaction(&self, transaction: TransactionData) {
         if let Some(signature) = get_signature(&transaction) {
             if self.transactions.contains_key(&signature) {
@@ -64,6 +61,9 @@ impl TransactionStore for TransactionStoreImpl {
     }
     fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>> {
         self.transactions.clone()
+    }
+    fn has_signature(&self, signature: &str) -> bool {
+        self.transactions.contains_key(signature)
     }
 }
 
