@@ -10,12 +10,15 @@ use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::time::Instant;
+use tracing::info;
 
 pub struct IrisRpcServerImpl {
     pub txn_sender: Arc<dyn SendTransactionClient>,
     pub store: Arc<dyn TransactionStore>,
     pub forwarder: Arc<RpcForwards>,
+    pub txn_count: AtomicU64,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -36,6 +39,7 @@ impl IrisRpcServerImpl {
             txn_sender,
             store,
             forwarder: rpc_forwards,
+            txn_count: AtomicU64::new(0)
         }
     }
 }
@@ -51,6 +55,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String> {
         let sent_at = Instant::now();
+        info!("txn count: {:?}", self.txn_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
         if !params.skip_preflight {
             return Err(invalid_request("running preflight check is not supported"));
