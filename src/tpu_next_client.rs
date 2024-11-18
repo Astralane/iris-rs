@@ -1,5 +1,6 @@
 use crate::store::TransactionData;
-use crate::transaction_client::{CreateClient, SendTransactionClient};
+use crate::utils::{CreateClient, SendTransactionClient};
+use metrics::counter;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     ConnectionWorkersSchedulerConfig, Fanout,
@@ -84,11 +85,18 @@ impl SendTransactionClient for TpuClientNextSender {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
+        if !self.enable_leader_sends {
+            return;
+        }
+        counter!("tpu_next_client_transactions").increment(1);
         let txn_batch = TransactionBatch::new(vec![txn.wire_transaction]);
         let sender = self.sender.clone();
         self.runtime.spawn(async move {
             if let Err(e) = sender.send(txn_batch).await {
                 error!("Failed to send transaction: {:?}", e);
+                counter!("transaction_send_failure", "to" => "local").increment(1);
+            } else {
+                counter!("transactions_sent", "to" => "local").increment(1);
             }
         });
     }

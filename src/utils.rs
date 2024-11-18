@@ -3,6 +3,8 @@ use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use tokio::runtime::Handle;
 
+pub const LOCAL_RPC_URL: &str = "local";
+
 pub trait SendTransactionClient: Send + Sync {
     fn send_transaction(&self, txn: TransactionData);
 }

@@ -46,7 +46,6 @@ impl TransactionStore for TransactionStoreImpl {
         }
     }
     fn get_signatures(&self) -> Vec<String> {
-        let start = Instant::now();
         let signatures = self
             .transactions
             .iter()
@@ -55,7 +54,6 @@ impl TransactionStore for TransactionStoreImpl {
         signatures
     }
     fn remove_transaction(&self, signature: String) -> Option<TransactionData> {
-        let start = Instant::now();
         let transaction = self.transactions.remove(&signature);
         transaction.map_or(None, |t| Some(t.1))
     }

@@ -1,5 +1,5 @@
 use crate::store::TransactionData;
-use crate::transaction_client::{CreateClient, SendTransactionClient};
+use crate::utils::{CreateClient, SendTransactionClient};
 use log::{info, warn};
 use solana_client::connection_cache::ConnectionCache;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
@@ -28,7 +28,6 @@ impl SendTransactionClient for ConnectionCacheClient {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
-        //self.forward_to_friendly_clients(txn.versioned_transaction.clone());
         if !self.enable_leader_forwards {
             return;
         }

@@ -1,24 +1,20 @@
 use crate::rpc::IrisRpcServer;
-use crate::rpc_forwards::RpcForwards;
 use crate::store::{TransactionData, TransactionStore};
-use crate::transaction_client::SendTransactionClient;
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
+use metrics::counter;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
-use std::sync::atomic::AtomicU64;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use metrics::counter;
 use tokio::time::Instant;
 
 pub struct IrisRpcServerImpl {
-    pub txn_sender: Arc<dyn SendTransactionClient>,
+    txn_sender: Sender<TransactionData>,
     pub transaction_store: Arc<dyn TransactionStore>,
-    pub forwarder: Arc<RpcForwards>,
-    pub txn_count: AtomicU64,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -31,15 +27,12 @@ pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
 
 impl IrisRpcServerImpl {
     pub fn new(
-        txn_sender: Arc<dyn SendTransactionClient>,
+        txn_sender: Sender<TransactionData>,
         transaction_store: Arc<dyn TransactionStore>,
-        rpc_forwards: Arc<RpcForwards>,
     ) -> Self {
         Self {
             txn_sender,
             transaction_store,
-            forwarder: rpc_forwards,
-            txn_count: AtomicU64::new(0),
         }
     }
 }
@@ -88,8 +81,10 @@ impl IrisRpcServer for IrisRpcServerImpl {
             retry_count: 0,
             max_retries: 0,
         };
-        self.forwarder.forward_to_known_rpcs(transaction.clone());
-        self.txn_sender.send_transaction(transaction);
+        self.txn_sender.send(transaction).map_err(|e| {
+            counter!("iris_errors", "type" => "send_transaction_error").increment(1);
+            invalid_request(&e.to_string())
+        })?;
         Ok(signature)
     }
 }

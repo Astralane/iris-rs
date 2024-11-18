@@ -2227,6 +2227,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "weighted-rs",
 ]
 
 [[package]]
@@ -6475,6 +6476,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841c67bff177718f1d4dfefde8d8f0e78f9b6589319ba88312f567fc5841a958"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "weighted-rs"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "365b2872b8d86cdeeffd9d5fcc25ec9e843904eb966d24fa81e1d7db29c30c23"
+dependencies = [
+ "rand 0.8.5",
 ]
 
 [[package]]

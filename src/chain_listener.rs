@@ -97,7 +97,7 @@ fn spawn_block_listener(
             } else {
                 // retry MAX_RETRIES times before shutting down
                 thread::sleep(Duration::from_millis(RETRY_INTERVAL));
-                let Ok(block_subscribe) = PubsubClient::block_subscribe(
+                let Ok(_block_subscribe) = PubsubClient::block_subscribe(
                     &ws_url,
                     RpcBlockSubscribeFilter::All,
                     config.clone(),
