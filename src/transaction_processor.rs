@@ -50,6 +50,10 @@ impl TransactionProcessor {
                 }
                 loop {
                     let tx = tx_receiver.recv().unwrap();
+                    let signature = tx.versioned_transaction.get_signature().to_string();
+                    if chain_listener.confirm_signature(&signature) {
+                        continue;
+                    }
                     let rpc_url = weighted.next().unwrap();
                     if let Some(client) = client_map.get(&rpc_url) {
                         chain_listener
@@ -64,10 +68,13 @@ impl TransactionProcessor {
             //aggregation logic, send to all known rpcs and race the transaction landing
             thread::spawn(move || loop {
                 let tx = tx_receiver.recv().unwrap();
+                let signature = tx.versioned_transaction.get_signature().to_string();
+                if chain_listener.confirm_signature(&signature) {
+                    continue;
+                }
+                chain_listener.track_signature(signature);
                 for (rpc_url, _) in all_rpcs.iter() {
                     if let Some(client) = client_map.get(rpc_url) {
-                        chain_listener
-                            .track_signature(tx.versioned_transaction.get_signature().to_string());
                         client.send_transaction(tx.clone());
                     }
                 }
