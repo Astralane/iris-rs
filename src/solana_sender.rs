@@ -1,6 +1,6 @@
 use crate::store::TransactionData;
 use crate::utils::SendTransactionClient;
-use log::error;
+use log::{error, info};
 use metrics::counter;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
@@ -42,11 +42,11 @@ impl SendTransactionClient for SolanaRpcSender {
                 .await
             {
                 Ok(_) => {
-                    debug!("Transaction sent successfully to {:?}", url);
+                    info!("Transaction sent successfully to {:?}", url);
                     counter!("iris_known_rpc_transactions", "to" => url).increment(1);
                 }
                 Err(e) => {
-                    error!("Failed to send transaction to {:?}: {:?}", url, e);
+                    info!("Failed to send transaction to {:?}: {:?}", url, e);
                     counter!("iris_error", "type" => format!("cannot_send_to_{}", url))
                         .increment(1);
                 }
