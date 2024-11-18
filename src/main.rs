@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
@@ -57,6 +58,7 @@ pub struct Config {
     lookahead_slots: u64,
     enable_routing: bool,
     use_tpu_client_next: bool,
+    prometheus_addr: SocketAddr,
     weight: u32,
 }
 
@@ -87,6 +89,11 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"))
         .unwrap_or(Keypair::new());
+
+    let _metrics = PrometheusBuilder::new()
+        .with_http_listener(config.prometheus_addr)
+        .install()
+        .expect("failed to install recorder/exporter");
 
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
