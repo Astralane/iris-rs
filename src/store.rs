@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use solana_sdk::transaction::VersionedTransaction;
 use std::sync::Arc;
-use tokio::time::Instant;
+use std::time::Instant;
 use tracing::error;
 
 #[derive(Clone, Debug)]
@@ -10,7 +10,6 @@ pub struct TransactionData {
     pub versioned_transaction: VersionedTransaction,
     pub sent_at: Instant,
     pub retry_count: usize,
-    pub max_retries: usize,
 }
 
 pub trait TransactionStore: Send + Sync {

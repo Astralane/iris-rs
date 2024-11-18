@@ -98,7 +98,7 @@ fn spawn_block_listener(
                 let block_update = block.value;
                 if let Some(block) = block_update.block {
                     let slot = block_update.slot;
-                    let block_time = block.block_time;
+                    let _block_time = block.block_time;
                     if let Some(transactions) = block.transactions {
                         for transaction in transactions {
                             let signature = transaction

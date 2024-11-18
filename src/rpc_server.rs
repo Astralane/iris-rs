@@ -9,7 +9,7 @@ use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::mpsc::Sender;
-use tokio::time::Instant;
+use std::time::Instant;
 
 pub struct IrisRpcServerImpl {
     txn_sender: Sender<TransactionData>,
@@ -24,12 +24,8 @@ pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
 }
 
 impl IrisRpcServerImpl {
-    pub fn new(
-        txn_sender: Sender<TransactionData>,
-    ) -> Self {
-        Self {
-            txn_sender,
-        }
+    pub fn new(txn_sender: Sender<TransactionData>) -> Self {
+        Self { txn_sender }
     }
 }
 #[async_trait]
@@ -72,7 +68,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
             versioned_transaction,
             sent_at,
             retry_count: 0,
-            max_retries: 0,
         };
         self.txn_sender.send(transaction).map_err(|e| {
             counter!("iris_error", "type" => "send_transaction_error").increment(1);

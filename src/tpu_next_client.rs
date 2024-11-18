@@ -1,6 +1,7 @@
-use crate::store::TransactionData;
+use crate::store::{TransactionData, TransactionStore};
 use crate::utils::{CreateClient, SendTransactionClient};
 use metrics::counter;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     ConnectionWorkersSchedulerConfig, Fanout,
@@ -9,6 +10,7 @@ use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -18,6 +20,7 @@ pub struct TpuClientNextSender {
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
     cancel: CancellationToken,
     enable_leader_sends: bool,
+    txn_store: Arc<dyn TransactionStore>,
 }
 
 impl CreateClient for TpuClientNextSender {
@@ -27,6 +30,7 @@ impl CreateClient for TpuClientNextSender {
         enable_leader_sends: bool,
         leader_forward_count: u64,
         validator_identity: Keypair,
+        txn_store: Arc<dyn TransactionStore>,
     ) -> Self {
         spawn_tpu_client_send_txs(
             runtime,
@@ -34,6 +38,7 @@ impl CreateClient for TpuClientNextSender {
             leader_forward_count,
             enable_leader_sends,
             validator_identity,
+            txn_store,
         )
     }
 }
@@ -44,6 +49,7 @@ fn spawn_tpu_client_send_txs(
     leader_forward_count: u64,
     enable_leader_sends: bool,
     validator_identity: Keypair,
+    txn_store: Arc<dyn TransactionStore>,
 ) -> TpuClientNextSender {
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     let cancel = CancellationToken::new();
@@ -76,18 +82,22 @@ fn spawn_tpu_client_send_txs(
         sender,
         cancel,
         enable_leader_sends,
+        txn_store,
     }
 }
 
 impl SendTransactionClient for TpuClientNextSender {
     fn send_transaction(&self, txn: TransactionData) {
-        info!(
-            "sending transaction {:?}",
-            txn.versioned_transaction.signatures[0].to_string()
-        );
+        let signature = txn.versioned_transaction.get_signature().to_string();
+        info!("sending transaction {:?}", signature);
         if !self.enable_leader_sends {
             return;
         }
+        if self.txn_store.has_signature(&signature) {
+            counter!("iris_duplicate_transaction_count").increment(1);
+            return;
+        }
+        self.txn_store.add_transaction(txn.clone());
         counter!("iris_tpu_next_client_transactions").increment(1);
         let txn_batch = TransactionBatch::new(vec![txn.wire_transaction]);
         let sender = self.sender.clone();

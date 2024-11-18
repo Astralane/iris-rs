@@ -1,8 +1,9 @@
-use crate::store::TransactionData;
+use crate::store::{TransactionData, TransactionStore};
 use crate::utils::{CreateClient, SendTransactionClient};
 use log::{info, warn};
 use metrics::counter;
 use solana_client::connection_cache::ConnectionCache;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
@@ -21,18 +22,22 @@ pub struct ConnectionCacheClient {
     leader_updater: Mutex<Box<dyn LeaderUpdater>>,
     lookahead_slots: u64,
     enable_leader_forwards: bool,
+    txn_store: Arc<dyn TransactionStore>,
 }
 
 impl SendTransactionClient for ConnectionCacheClient {
     fn send_transaction(&self, txn: TransactionData) {
-        info!(
-            "sending transaction {:?}",
-            txn.versioned_transaction.signatures[0].to_string()
-        );
+        let signature = txn.versioned_transaction.get_signature().to_string();
+        info!("sending transaction {:?}", signature);
         counter!("iris_tx_send_to_connection_cache").increment(1);
         if !self.enable_leader_forwards {
             return;
         }
+        if self.txn_store.has_signature(&signature) {
+            counter!("iris_duplicate_transaction_count").increment(1);
+            return;
+        }
+        self.txn_store.add_transaction(txn.clone());
         let leaders_lock = self.leader_updater.lock();
         let leaders = leaders_lock
             .unwrap()
@@ -78,6 +83,7 @@ impl CreateClient for ConnectionCacheClient {
         enable_leader_forwards: bool,
         lookahead_slots: u64,
         validator_identity: Keypair,
+        txn_store: Arc<dyn TransactionStore>,
     ) -> Self {
         let connection_cache = Arc::new(ConnectionCache::new_with_client_options(
             "iris",
@@ -92,6 +98,7 @@ impl CreateClient for ConnectionCacheClient {
             leader_updater: Mutex::new(leader_updater),
             lookahead_slots,
             enable_leader_forwards,
+            txn_store,
         }
     }
 }

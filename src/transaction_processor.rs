@@ -5,7 +5,7 @@ use crate::utils::{SendTransactionClient, LOCAL_RPC_URL};
 use log::error;
 use solana_client::rpc_client::SerializableTransaction;
 use std::collections::HashMap;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use weighted_rs::{RoundrobinWeight, Weight};
@@ -22,7 +22,7 @@ impl TransactionProcessor {
         client_weight: u32,
         other_rpcs: Vec<(String, u32)>,
         enable_routing: bool,
-        chain_listener: ChainListener,
+        chain_listener: Arc<ChainListener>,
     ) -> Self {
         let all_rpcs = vec![(LOCAL_RPC_URL.to_owned(), client_weight)]
             .into_iter()

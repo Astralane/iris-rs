@@ -1,9 +1,10 @@
+use crate::chain_listener::ChainListener;
 use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
 use crate::transaction_processor::TransactionProcessor;
-use crate::utils::{CreateClient, SendTransactionClient};
+use crate::utils::{transaction_retry_loop, CreateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -60,6 +61,7 @@ pub struct Config {
     enable_routing: bool,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
+    retry_interval_seconds: u32,
     weight: u32,
 }
 
@@ -98,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
         .map_err(|e| anyhow!(e))?;
+    let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
     let self_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
         log::info!("Using TpuClientNextSender");
@@ -107,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
             config.enable_leader_forwards,
             config.lookahead_slots,
             identity_keypair,
+            txn_store.clone(),
         ))
     } else {
         log::info!("Using ConnectionCacheClient");
@@ -116,15 +120,22 @@ async fn main() -> anyhow::Result<()> {
             config.enable_leader_forwards,
             config.lookahead_slots,
             identity_keypair,
+            txn_store.clone(),
         ))
     };
 
+    let chain_listener = Arc::new(ChainListener::new(config.ws_url, shutdown, 10000));
+
+    let _retry_hdl = tokio::spawn(transaction_retry_loop(
+        txn_store,
+        self_client.clone(),
+        chain_listener.clone(),
+        config.retry_interval_seconds,
+        config.max_retries,
+        1000,
+    ));
+
     let (sender, receiver) = std::sync::mpsc::channel();
-    let chain_listener = chain_listener::ChainListener::new(
-        config.ws_url,
-        shutdown,
-        10000,
-    );
 
     let _tx_processor_hdl = TransactionProcessor::spawn_new_with_sender(
         tokio::runtime::Handle::current(),
