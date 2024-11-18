@@ -31,7 +31,7 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "OK".to_string()
+        "Ok".to_string()
     }
 
     async fn send_transaction(

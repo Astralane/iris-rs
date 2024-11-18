@@ -10,7 +10,9 @@ use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
@@ -18,6 +20,8 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tokio::runtime;
+use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -39,7 +43,7 @@ pub struct Config {
     address: SocketAddr,
     identity_keypair_file: Option<String>,
     //forwards to known rpcs
-    friendly_rpcs: Vec<(String, u32)>,
+    friendly_rpcs: Option<Vec<(String, u32)>>,
     //should enable forwards to leader
     enable_leader_forwards: bool,
     max_retries: usize,
@@ -68,6 +72,10 @@ fn default_true() -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    //for some reason ths is required to make rustls work
+    CryptoProvider::install_default(rustls::crypto::ring::default_provider())
+        .expect("Failed to install default crypto provider");
+
     dotenv::dotenv().ok();
     env_logger::init();
     //setup tracing
@@ -120,9 +128,16 @@ async fn main() -> anyhow::Result<()> {
             txn_store.clone(),
         ))
     };
-
-    let chain_listener = Arc::new(ChainListener::new(config.ws_url, shutdown, 10000));
-
+    let ws_client = PubsubClient::new(&config.ws_url)
+        .await
+        .expect("Failed to connect to websocket");
+    let chain_listener = Arc::new(ChainListener::new(
+        runtime::Handle::current(),
+        shutdown,
+        10000,
+        Arc::new(ws_client),
+    ));
+    info!("initialized listener");
     let _retry_hdl = tokio::spawn(transaction_retry_loop(
         txn_store,
         self_client.clone(),
@@ -135,11 +150,11 @@ async fn main() -> anyhow::Result<()> {
     let (sender, receiver) = std::sync::mpsc::channel();
 
     let _tx_processor_hdl = TransactionProcessor::spawn_new_with_sender(
-        tokio::runtime::Handle::current(),
+        Handle::current(),
         receiver,
         self_client,
         config.weight,
-        config.friendly_rpcs,
+        config.friendly_rpcs.unwrap_or_default(),
         config.enable_routing,
         chain_listener,
     );

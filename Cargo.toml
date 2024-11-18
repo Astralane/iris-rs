@@ -5,11 +5,11 @@ edition = "2021"
 
 [dependencies]
 solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
-solana-client = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-client = { git = "https://github.com/anza-xyz/agave.git" }
 solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 solana-sdk = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 solana-program-runtime ={ git = "https://github.com/anza-xyz/agave.git", default-features = false }
-solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git" }
 solana-quic-client = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 solana-connection-cache = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 curve25519-dalek = { version = "4.1.3" }
@@ -33,6 +33,8 @@ reqwest = { version = "0.12.9", features = ["json"] }
 metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16.0"
 weighted-rs = "0.1.3"
+futures-util = "0.3.31"
+rustls = { version = "0.23.17", features = ["ring"]  }
 
 [patch.crates-io]
 solana-program = { git = "https://github.com/anza-xyz/agave.git" }
