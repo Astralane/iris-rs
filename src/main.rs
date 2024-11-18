@@ -37,12 +37,9 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
-    bind: SocketAddr,
     identity_keypair_file: Option<String>,
     //forwards to known rpcs
     friendly_rpcs: Vec<(String, u32)>,
-    //jito Block engine urls
-    jito_urls: Vec<String>,
     //should enable forwards to leader
     enable_leader_forwards: bool,
     max_retries: usize,
