@@ -10,6 +10,7 @@ use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
+use tracing::info;
 
 pub struct IrisRpcServerImpl {
     txn_sender: Sender<TransactionData>,
@@ -40,6 +41,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String> {
         let sent_at = Instant::now();
+        info!("Received transaction on rpc connection loop");
         counter!("iris_txn_total_transactions").increment(1);
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
         if !params.skip_preflight {

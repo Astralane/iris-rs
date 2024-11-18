@@ -51,7 +51,7 @@ impl TransactionProcessor {
                 }
                 loop {
                     let tx = tx_receiver.recv().unwrap();
-                    info!("Received transaction");
+                    info!("Received transaction on processor loop");
                     let signature = tx.versioned_transaction.get_signature().to_string();
                     if chain_listener.confirm_signature(&signature) {
                         //duplicate
@@ -62,7 +62,8 @@ impl TransactionProcessor {
                         info!("Sending transaction to rpc_url: {}", rpc_url);
                         chain_listener
                             .track_signature(tx.versioned_transaction.get_signature().to_string());
-                        client.send_transaction(tx)
+                        client.send_transaction(tx);
+                        info!("successfully sent");
                     } else {
                         error!("No client found for rpc_url: {}", rpc_url);
                     }
