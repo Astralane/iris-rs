@@ -109,6 +109,7 @@ fn spawn_block_listener(
                                 // remove from tracking signatures
                                 if let Some((_, send_slot)) = tracking_store.remove(&signature) {
                                     latency_histogram.record(slot.saturating_sub(send_slot) as f64);
+                                    counter!("iris_transactions_landed").increment(1);
                                 }
                                 // add to seen signatures
                                 signature_store.insert(signature, slot);

@@ -52,6 +52,7 @@ impl TransactionProcessor {
                     let tx = tx_receiver.recv().unwrap();
                     let signature = tx.versioned_transaction.get_signature().to_string();
                     if chain_listener.confirm_signature(&signature) {
+                        //duplicate
                         continue;
                     }
                     let rpc_url = weighted.next().unwrap();
