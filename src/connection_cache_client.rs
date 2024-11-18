@@ -1,6 +1,7 @@
 use crate::store::TransactionData;
 use crate::utils::{CreateClient, SendTransactionClient};
 use log::{info, warn};
+use metrics::counter;
 use solana_client::connection_cache::ConnectionCache;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
 use solana_sdk::signature::Keypair;
@@ -28,6 +29,7 @@ impl SendTransactionClient for ConnectionCacheClient {
             "sending transaction {:?}",
             txn.versioned_transaction.signatures[0].to_string()
         );
+        counter!("iris_tx_send_to_connection_cache").increment(1);
         if !self.enable_leader_forwards {
             return;
         }
@@ -52,6 +54,7 @@ impl SendTransactionClient for ConnectionCacheClient {
                                 "Failed to send transaction to leader TRANSPORT_ERROR {:?}: {:?}",
                                 leader, e
                             );
+                            counter!("iris_error", "type" => "cannot_send_to_leader").increment(1);
                         } else {
                             info!("Successfully sent transaction to leader: {:?}", leader);
                             break;

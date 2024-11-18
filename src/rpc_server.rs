@@ -1,5 +1,5 @@
 use crate::rpc::IrisRpcServer;
-use crate::store::{TransactionData, TransactionStore};
+use crate::store::TransactionData;
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -9,12 +9,10 @@ use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 use tokio::time::Instant;
 
 pub struct IrisRpcServerImpl {
     txn_sender: Sender<TransactionData>,
-    pub transaction_store: Arc<dyn TransactionStore>,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -28,11 +26,9 @@ pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
 impl IrisRpcServerImpl {
     pub fn new(
         txn_sender: Sender<TransactionData>,
-        transaction_store: Arc<dyn TransactionStore>,
     ) -> Self {
         Self {
             txn_sender,
-            transaction_store,
         }
     }
 }
@@ -51,11 +47,11 @@ impl IrisRpcServer for IrisRpcServerImpl {
         counter!("iris_txn_total_transactions").increment(1);
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
         if !params.skip_preflight {
-            counter!("iris_errors", "type" => "preflight_check").increment(1);
+            counter!("iris_error", "type" => "preflight_check").increment(1);
             return Err(invalid_request("running preflight check is not supported"));
         }
         let binary_encoding = encoding.into_binary_encoding().ok_or_else(|| {
-            counter!("iris_errors", "type" => "invalid_encoding").increment(1);
+            counter!("iris_error", "type" => "invalid_encoding").increment(1);
             invalid_request(&format!(
                 "unsupported encoding: {encoding}. Supported encodings: base58, base64"
             ))
@@ -66,14 +62,11 @@ impl IrisRpcServer for IrisRpcServerImpl {
                     (wire_transaction, versioned_transaction)
                 }
                 Err(e) => {
-                    counter!("iris_errors", "type" => "cannot_decode_transaction").increment(1);
+                    counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
                     return Err(invalid_request(&e.to_string()));
                 }
             };
         let signature = versioned_transaction.signatures[0].to_string();
-        if self.transaction_store.has_signature(&signature) {
-            return Ok(signature);
-        }
         let transaction = TransactionData {
             wire_transaction,
             versioned_transaction,
@@ -82,7 +75,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
             max_retries: 0,
         };
         self.txn_sender.send(transaction).map_err(|e| {
-            counter!("iris_errors", "type" => "send_transaction_error").increment(1);
+            counter!("iris_error", "type" => "send_transaction_error").increment(1);
             invalid_request(&e.to_string())
         })?;
         Ok(signature)

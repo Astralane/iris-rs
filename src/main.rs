@@ -15,6 +15,7 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -82,8 +83,6 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
     info!("config: {:?}", config);
 
-    let address = config.address;
-    let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let identity_keypair = config
         .identity_keypair_file
         .as_ref()
@@ -94,7 +93,8 @@ async fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
-
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
         .map_err(|e| anyhow!(e))?;
@@ -120,6 +120,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let (sender, receiver) = std::sync::mpsc::channel();
+    let chain_listener = chain_listener::ChainListener::new(
+        config.ws_url,
+        shutdown,
+        10000,
+    );
+
     let _tx_processor_hdl = TransactionProcessor::spawn_new_with_sender(
         tokio::runtime::Handle::current(),
         receiver,
@@ -127,17 +133,18 @@ async fn main() -> anyhow::Result<()> {
         config.weight,
         config.friendly_rpcs,
         config.enable_routing,
+        chain_listener,
     );
 
-    let iris = IrisRpcServerImpl::new(sender, Arc::new(store::TransactionStoreImpl::new()));
+    let iris = IrisRpcServerImpl::new(sender);
 
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)
         .max_connections(1_000_000)
-        .build(address)
+        .build(config.address)
         .await?;
 
-    info!("server starting in {:?}", address);
+    info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
     server_hdl.stopped().await;
     Ok(())

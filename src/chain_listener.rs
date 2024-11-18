@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 use log::error;
-use metrics::counter;
+use metrics::{counter, histogram};
 use solana_client::pubsub_client::PubsubClient;
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
@@ -16,28 +16,38 @@ use std::time::Duration;
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
 
-type SignatureStore = DashMap<String, (i64, u64)>;
+//Signature and slot number the transaction was sent
+type SignatureStore = DashMap<String, u64>;
+
 pub struct ChainListener {
     slot: Arc<AtomicU64>,
     // signature -> (block_time, slot)
     signature_store: Arc<SignatureStore>,
-    block_listener: thread::JoinHandle<()>,
-    slot_listener: thread::JoinHandle<()>,
+    tracking_store: Arc<SignatureStore>,
+    thread_hdls: Vec<JoinHandle<()>>,
 }
 
 impl ChainListener {
-    pub fn new(ws_url: String, shutdown: Arc<AtomicBool>) -> Self {
+    pub fn new(ws_url: String, shutdown: Arc<AtomicBool>, retain_slot_count: u64) -> Self {
         let current_slot = Arc::new(AtomicU64::new(0));
         let signature_store = Arc::new(DashMap::new());
+        let tracking_store = Arc::new(DashMap::new());
 
-        let h1 = spawn_block_listener(shutdown.clone(), signature_store.clone(), ws_url.clone());
-        let h2 = spawn_slot_listener(shutdown, current_slot.clone(), ws_url);
+        let mut hdl = Vec::new();
+        hdl.push(spawn_block_listener(
+            shutdown.clone(),
+            signature_store.clone(),
+            tracking_store.clone(),
+            retain_slot_count,
+            ws_url.clone(),
+        ));
+        hdl.push(spawn_slot_listener(shutdown, current_slot.clone(), ws_url));
 
         Self {
             slot: current_slot,
             signature_store,
-            block_listener: h1,
-            slot_listener: h2,
+            thread_hdls: hdl,
+            tracking_store,
         }
     }
 
@@ -45,17 +55,24 @@ impl ChainListener {
         self.slot.load(Ordering::Relaxed)
     }
 
-    pub fn confirm_transaction(&self, signature: String) -> bool {
-        self.signature_store.contains_key(&signature)
+    pub fn track_signature(&self, signature: String) {
+        self.tracking_store.insert(signature, self.get_slot());
+    }
+
+    pub fn confirm_signature(&self, signature: &str) -> bool {
+        self.signature_store.contains_key(signature)
     }
 }
 
 fn spawn_block_listener(
     shutdown: Arc<AtomicBool>,
     signature_store: Arc<SignatureStore>,
+    tracking_store: Arc<SignatureStore>,
+    retain_slot_count: u64,
     ws_url: String,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
+        let latency_histogram = histogram!("iris_block_latency");
         let config = Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),
             encoding: Some(Base64),
@@ -67,7 +84,7 @@ fn spawn_block_listener(
             PubsubClient::block_subscribe(&ws_url, RpcBlockSubscribeFilter::All, config.clone())
         else {
             error!("Error subscribing to block updates");
-            counter!("iris_errors_count", "type"=>"block_subscribe_error").increment(1);
+            counter!("iris_error", "type"=>"block_subscribe_error").increment(1);
             //shutdown critical error
             shutdown.store(true, Ordering::Relaxed);
             return;
@@ -88,11 +105,19 @@ fn spawn_block_listener(
                                 .transaction
                                 .decode()
                                 .map(|t| t.signatures[0].to_string());
-                            if let (Some(signature), Some(timestamp)) = (signature, block_time) {
-                                signature_store.insert(signature, (timestamp, slot));
+                            if let Some(signature) = signature {
+                                // remove from tracking signatures
+                                if let Some((_, send_slot)) = tracking_store.remove(&signature) {
+                                    latency_histogram.record(slot.saturating_sub(send_slot) as f64);
+                                }
+                                // add to seen signatures
+                                signature_store.insert(signature, slot);
                             }
                         }
                     }
+                    // remove old signatures to prevent leak of memory < slot - retain_slot_count
+                    signature_store.retain(|_, v| *v > slot - retain_slot_count);
+                    tracking_store.retain(|_, v| *v > slot - retain_slot_count);
                 }
             } else {
                 // retry MAX_RETRIES times before shutting down
@@ -103,7 +128,7 @@ fn spawn_block_listener(
                     config.clone(),
                 ) else {
                     error!("Error subscribing to block updates");
-                    counter!("iris_errors_count", "type"=>"block_subscribe_error").increment(1);
+                    counter!("iris_error", "type"=>"block_subscribe_error").increment(1);
                     retries += 1;
                     if retries >= MAX_RETRIES {
                         shutdown.store(true, Ordering::Relaxed);
@@ -134,7 +159,7 @@ fn spawn_slot_listener(
             Ok(_) => { /* doesn't seem to do anything */ }
             Err(e) => {
                 error!("Error subscribing to slot updates: {:?}", e);
-                counter!("iris_errors_count", "type"=>"slot_subscribe_error").increment(1);
+                counter!("iris_error", "type"=>"slot_subscribe_error").increment(1);
                 //shutdown critical error
                 shutdown.store(true, Ordering::Relaxed);
                 return;

@@ -88,15 +88,13 @@ impl SendTransactionClient for TpuClientNextSender {
         if !self.enable_leader_sends {
             return;
         }
-        counter!("tpu_next_client_transactions").increment(1);
+        counter!("iris_tpu_next_client_transactions").increment(1);
         let txn_batch = TransactionBatch::new(vec![txn.wire_transaction]);
         let sender = self.sender.clone();
         self.runtime.spawn(async move {
             if let Err(e) = sender.send(txn_batch).await {
                 error!("Failed to send transaction: {:?}", e);
-                counter!("transaction_send_failure", "to" => "local").increment(1);
-            } else {
-                counter!("transactions_sent", "to" => "local").increment(1);
+                counter!("iris_error", "type" => "cannot_send_local").increment(1);
             }
         });
     }

@@ -43,11 +43,12 @@ impl SendTransactionClient for SolanaRpcSender {
             {
                 Ok(_) => {
                     debug!("Transaction sent successfully to {:?}", url);
-                    counter!("transactions_sent", "to" => url).increment(1);
+                    counter!("iris_known_rpc_transactions", "to" => url).increment(1);
                 }
                 Err(e) => {
                     error!("Failed to send transaction to {:?}: {:?}", url, e);
-                    counter!("transaction_send_failure", "to" => url).increment(1);
+                    counter!("iris_error", "type" => format!("cannot_send_to_{}", url))
+                        .increment(1);
                 }
             }
         });
