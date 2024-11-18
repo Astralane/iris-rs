@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
+use tracing::info;
 use weighted_rs::{RoundrobinWeight, Weight};
 
 pub struct TransactionProcessor {
@@ -50,6 +51,7 @@ impl TransactionProcessor {
                 }
                 loop {
                     let tx = tx_receiver.recv().unwrap();
+                    info!("Received transaction");
                     let signature = tx.versioned_transaction.get_signature().to_string();
                     if chain_listener.confirm_signature(&signature) {
                         //duplicate
@@ -57,6 +59,7 @@ impl TransactionProcessor {
                     }
                     let rpc_url = weighted.next().unwrap();
                     if let Some(client) = client_map.get(&rpc_url) {
+                        info!("Sending transaction to rpc_url: {}", rpc_url);
                         chain_listener
                             .track_signature(tx.versioned_transaction.get_signature().to_string());
                         client.send_transaction(tx)
