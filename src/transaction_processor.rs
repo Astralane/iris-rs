@@ -50,7 +50,9 @@ impl TransactionProcessor {
                     weighted.add(rpc_url, weight as isize);
                 }
                 loop {
-                    let tx = tx_receiver.recv().expect("tx_sender dropped should not happen");
+                    let tx = tx_receiver
+                        .recv()
+                        .expect("tx_sender dropped should not happen");
                     info!("Received transaction on processor loop");
                     let signature = tx.versioned_transaction.get_signature().to_string();
                     if chain_listener.confirm_signature(&signature) {

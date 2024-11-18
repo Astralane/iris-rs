@@ -4,7 +4,7 @@ use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
 use crate::transaction_processor::TransactionProcessor;
-use crate::utils::{transaction_retry_loop, CreateClient, SendTransactionClient};
+use crate::utils::{CreateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         log::info!("Using ConnectionCacheClient");
         Arc::new(ConnectionCacheClient::create_client(
-            tokio::runtime::Handle::current(),
+            Handle::current(),
             leader_updater,
             config.enable_leader_forwards,
             config.lookahead_slots,
@@ -132,19 +132,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to websocket");
     let chain_listener = Arc::new(ChainListener::new(
-        runtime::Handle::current(),
+        Handle::current(),
         shutdown,
         10000,
         Arc::new(ws_client),
-    ));
-    info!("initialized listener");
-    let _retry_hdl = tokio::spawn(transaction_retry_loop(
-        txn_store,
-        self_client.clone(),
-        chain_listener.clone(),
-        config.retry_interval_seconds,
-        config.max_retries,
-        1000,
     ));
 
     let (sender, receiver) = std::sync::mpsc::channel();
