@@ -9,7 +9,24 @@ pub struct TransactionData {
     pub wire_transaction: Vec<u8>,
     pub versioned_transaction: VersionedTransaction,
     pub sent_at: Instant,
+    pub slot: u64,
     pub retry_count: usize,
+}
+
+impl TransactionData {
+    pub fn new(
+        wire_transaction: Vec<u8>,
+        versioned_transaction: VersionedTransaction,
+        slot: u64,
+    ) -> Self {
+        Self {
+            wire_transaction,
+            versioned_transaction,
+            sent_at: Instant::now(),
+            slot,
+            retry_count: 0,
+        }
+    }
 }
 
 pub trait TransactionStore: Send + Sync {

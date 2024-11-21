@@ -1,9 +1,7 @@
-use crate::store::{TransactionData, TransactionStore};
 use crate::utils::{CreateClient, SendTransactionClient};
 use log::{info, warn};
 use metrics::counter;
 use solana_client::connection_cache::ConnectionCache;
-use solana_client::rpc_client::SerializableTransaction;
 use solana_connection_cache::nonblocking::client_connection::ClientConnection;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
@@ -21,30 +19,20 @@ pub struct ConnectionCacheClient {
     connection_cache: Arc<ConnectionCache>,
     leader_updater: Mutex<Box<dyn LeaderUpdater>>,
     lookahead_slots: u64,
-    enable_leader_forwards: bool,
-    txn_store: Arc<dyn TransactionStore>,
 }
 
 impl SendTransactionClient for ConnectionCacheClient {
-    fn send_transaction(&self, txn: TransactionData) {
-        let signature = txn.versioned_transaction.get_signature().to_string();
-        info!("sending transaction {:?}", signature);
+    fn send_transaction(&self, wire_transaction: Vec<u8>) {
         counter!("iris_tx_send_to_connection_cache").increment(1);
-        if !self.enable_leader_forwards {
-            return;
-        }
-        if self.txn_store.has_signature(&signature) {
-            counter!("iris_duplicate_transaction_count").increment(1);
-            return;
-        }
-        self.txn_store.add_transaction(txn.clone());
-        let leaders_lock = self.leader_updater.lock();
-        let leaders = leaders_lock
-            .unwrap()
-            .next_leaders(self.lookahead_slots as usize);
+        let leaders = {
+            let leaders_lock = self.leader_updater.lock();
+            leaders_lock
+                .unwrap()
+                .next_leaders(self.lookahead_slots as usize)
+        };
         for leader in leaders {
             let connection_cache = self.connection_cache.clone();
-            let wire_transaction = txn.wire_transaction.clone();
+            let wire_transaction = wire_transaction.clone();
             self.runtime.spawn(async move {
                 for _ in 0..MAX_RETRIES {
                     let conn = connection_cache.get_nonblocking_connection(&leader);
@@ -74,16 +62,18 @@ impl SendTransactionClient for ConnectionCacheClient {
             });
         }
     }
+
+    fn send_transaction_batch(&self, wire_transaction: Vec<Vec<u8>>) {
+        unimplemented!()
+    }
 }
 
 impl CreateClient for ConnectionCacheClient {
     fn create_client(
         runtime: Handle,
         leader_updater: Box<dyn LeaderUpdater>,
-        enable_leader_forwards: bool,
         lookahead_slots: u64,
         validator_identity: Keypair,
-        txn_store: Arc<dyn TransactionStore>,
     ) -> Self {
         let connection_cache = Arc::new(ConnectionCache::new_with_client_options(
             "iris",
@@ -97,8 +87,6 @@ impl CreateClient for ConnectionCacheClient {
             connection_cache,
             leader_updater: Mutex::new(leader_updater),
             lookahead_slots,
-            enable_leader_forwards,
-            txn_store,
         }
     }
 }

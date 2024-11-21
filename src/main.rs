@@ -1,10 +1,12 @@
-use crate::chain_listener::ChainListener;
+#![warn(unused_crate_dependencies)]
+#![warn(clippy::all)]
+
+use crate::chain_state::ChainStateWsClient;
 use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
-use crate::transaction_processor::TransactionProcessor;
-use crate::utils::{CreateClient, SendTransactionClient};
+use crate::utils::{ChainStateClient, CreateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -20,19 +22,16 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::runtime;
 use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-mod chain_listener;
+mod chain_state;
 mod connection_cache_client;
 mod rpc;
 mod rpc_server;
-mod solana_sender;
 mod store;
 mod tpu_next_client;
-mod transaction_processor;
 mod utils;
 mod vendor;
 
@@ -42,10 +41,6 @@ pub struct Config {
     ws_url: String,
     address: SocketAddr,
     identity_keypair_file: Option<String>,
-    //forwards to known rpcs
-    friendly_rpcs: Option<Vec<(String, u32)>>,
-    //should enable forwards to leader
-    enable_leader_forwards: bool,
     max_retries: usize,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
@@ -59,11 +54,9 @@ pub struct Config {
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
     lookahead_slots: u64,
-    enable_routing: bool,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
-    weight: u32,
 }
 
 fn default_true() -> bool {
@@ -100,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
+
     let shutdown = Arc::new(AtomicBool::new(false));
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
@@ -107,50 +101,34 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow!(e))?;
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
-    let self_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
+    let tx_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
         log::info!("Using TpuClientNextSender");
         Arc::new(TpuClientNextSender::create_client(
-            tokio::runtime::Handle::current(),
+            Handle::current(),
             leader_updater,
-            config.enable_leader_forwards,
             config.lookahead_slots,
             identity_keypair,
-            txn_store.clone(),
         ))
     } else {
         log::info!("Using ConnectionCacheClient");
         Arc::new(ConnectionCacheClient::create_client(
             Handle::current(),
             leader_updater,
-            config.enable_leader_forwards,
             config.lookahead_slots,
             identity_keypair,
-            txn_store.clone(),
         ))
     };
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
         .expect("Failed to connect to websocket");
-    let chain_listener = Arc::new(ChainListener::new(
+
+    let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
         Handle::current(),
         shutdown,
         10000,
         Arc::new(ws_client),
     ));
-
-    let (sender, receiver) = std::sync::mpsc::channel();
-
-    let _tx_processor_hdl = TransactionProcessor::spawn_new_with_sender(
-        Handle::current(),
-        receiver,
-        self_client,
-        config.weight,
-        config.friendly_rpcs.unwrap_or_default(),
-        config.enable_routing,
-        chain_listener,
-    );
-
-    let iris = IrisRpcServerImpl::new(sender);
+    let iris = IrisRpcServerImpl::new(tx_client, txn_store, chain_state);
 
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)

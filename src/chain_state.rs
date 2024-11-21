@@ -1,8 +1,10 @@
+use crate::utils::ChainStateClient;
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use log::error;
-use metrics::{counter, gauge, histogram};
+use metrics::gauge;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -10,8 +12,6 @@ use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
@@ -19,18 +19,17 @@ use tracing::{debug, info};
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
 
-//Signature and slot number the transaction was sent
+//Signature and slot number the transaction was confirmed
 type SignatureStore = DashMap<String, u64>;
 
-pub struct ChainListener {
+pub struct ChainStateWsClient {
     slot: Arc<AtomicU64>,
     // signature -> (block_time, slot)
     signature_store: Arc<SignatureStore>,
-    tracking_store: Arc<SignatureStore>,
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
-impl ChainListener {
+impl ChainStateWsClient {
     pub fn new(
         runtime: Handle,
         shutdown: Arc<AtomicBool>,
@@ -39,13 +38,11 @@ impl ChainListener {
     ) -> Self {
         let current_slot = Arc::new(AtomicU64::new(0));
         let signature_store = Arc::new(DashMap::new());
-        let tracking_store = Arc::new(DashMap::new());
         let mut hdl = Vec::new();
         hdl.push(spawn_block_listener(
             runtime.clone(),
             shutdown.clone(),
             signature_store.clone(),
-            tracking_store.clone(),
             retain_slot_count,
             ws_client.clone(),
         ));
@@ -60,33 +57,27 @@ impl ChainListener {
             slot: current_slot,
             signature_store,
             thread_hdls: hdl,
-            tracking_store,
         }
-    }
-
-    pub fn get_slot(&self) -> u64 {
-        self.slot.load(Ordering::Relaxed)
-    }
-
-    pub fn track_signature(&self, signature: String) {
-        self.tracking_store.insert(signature, self.get_slot());
-    }
-
-    pub fn confirm_signature(&self, signature: &str) -> bool {
-        self.signature_store.contains_key(signature)
     }
 }
 
+impl ChainStateClient for ChainStateWsClient {
+    fn get_slot(&self) -> u64 {
+        self.slot.load(Ordering::Relaxed)
+    }
+
+    fn confirm_signature_status(&self, signature: &str) -> Option<u64> {
+        self.signature_store.get(signature).map(|v| *v)
+    }
+}
 fn spawn_block_listener(
     runtime: Handle,
     shutdown: Arc<AtomicBool>,
     signature_store: Arc<SignatureStore>,
-    tracking_store: Arc<SignatureStore>,
     retain_slot_count: u64,
     ws_client: Arc<PubsubClient>,
 ) -> JoinHandle<()> {
     runtime.spawn(async move {
-        let latency_histogram = histogram!("iris_block_latency");
         let config = Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),
             encoding: Some(Base64),
@@ -119,13 +110,8 @@ fn spawn_block_listener(
                         let signature = transaction
                             .transaction
                             .decode()
-                            .map(|t| t.signatures[0].to_string());
+                            .map(|t| t.get_signature().to_string());
                         if let Some(signature) = signature {
-                            // remove from tracking signatures
-                            if let Some((_, send_slot)) = tracking_store.remove(&signature) {
-                                latency_histogram.record(slot.saturating_sub(send_slot) as f64);
-                                counter!("iris_transactions_landed").increment(1);
-                            }
                             // add to seen signatures
                             signature_store.insert(signature, slot);
                         }
@@ -133,7 +119,6 @@ fn spawn_block_listener(
                 }
                 // remove old signatures to prevent leak of memory < slot - retain_slot_count
                 signature_store.retain(|_, v| *v > slot - retain_slot_count);
-                tracking_store.retain(|_, v| *v > slot - retain_slot_count);
             }
         }
         drop(stream);
