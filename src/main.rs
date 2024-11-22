@@ -97,10 +97,11 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
-    info!("creating leader updater");
+    info!("creating leader updater...");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
         .map_err(|e| anyhow!(e))?;
+    info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
     let tx_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
