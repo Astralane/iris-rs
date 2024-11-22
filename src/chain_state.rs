@@ -86,45 +86,48 @@ fn spawn_block_listener(
             max_supported_transaction_version: Some(0),
         });
         info!("Subscribing to block updates");
-        let Ok((mut stream, unsub)) = ws_client
+        match ws_client
             .block_subscribe(RpcBlockSubscribeFilter::All, config)
             .await
-        else {
-            error!("Error subscribing to block updates");
-            shutdown.store(true, Ordering::Relaxed);
-            return;
-        };
-
-        while let Some(block) = stream.next().await {
-            debug!("Block update");
-            gauge!("iris_current_block").set(block.value.slot as f64);
-            if shutdown.load(Ordering::Relaxed) {
-                break;
-            }
-            let block_update = block.value;
-            if let Some(block) = block_update.block {
-                let slot = block_update.slot;
-                let _block_time = block.block_time;
-                if let Some(transactions) = block.transactions {
-                    for transaction in transactions {
-                        let signature = transaction
-                            .transaction
-                            .decode()
-                            .map(|t| t.get_signature().to_string());
-                        if let Some(signature) = signature {
-                            // add to seen signatures
-                            signature_store.insert(signature, slot);
+        {
+            Ok((mut stream, unsub)) => {
+                while let Some(block) = stream.next().await {
+                    debug!("Block update");
+                    gauge!("iris_current_block").set(block.value.slot as f64);
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let block_update = block.value;
+                    if let Some(block) = block_update.block {
+                        let slot = block_update.slot;
+                        let _block_time = block.block_time;
+                        if let Some(transactions) = block.transactions {
+                            for transaction in transactions {
+                                let signature = transaction
+                                    .transaction
+                                    .decode()
+                                    .map(|t| t.get_signature().to_string());
+                                if let Some(signature) = signature {
+                                    // add to seen signatures
+                                    signature_store.insert(signature, slot);
+                                }
+                            }
                         }
+                        // remove old signatures to prevent leak of memory < slot - retain_slot_count
+                        signature_store.retain(|_, v| *v > slot - retain_slot_count);
                     }
                 }
-                // remove old signatures to prevent leak of memory < slot - retain_slot_count
-                signature_store.retain(|_, v| *v > slot - retain_slot_count);
+                drop(stream);
+                unsub().await;
+                //critical error
+                shutdown.store(true, Ordering::Relaxed);
+            }
+            Err(e) => {
+                error!("Error subscribing to block updates {:?}", e);
+                shutdown.store(true, Ordering::Relaxed);
+                return;
             }
         }
-        drop(stream);
-        unsub().await;
-        //critical error
-        shutdown.store(true, Ordering::Relaxed);
     })
 }
 

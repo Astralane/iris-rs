@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
+    info!("creating leader updater");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
         .map_err(|e| anyhow!(e))?;
@@ -134,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
         txn_store,
         chain_state,
         Duration::from_secs(config.retry_interval_seconds as u64),
-        shutdown,
+        shutdown.clone(),
     );
 
     let server = ServerBuilder::default()
@@ -145,6 +146,11 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
+    //exit when shutdown is triggered
+    while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    server_hdl.stop()?;
     server_hdl.stopped().await;
     Ok(())
 }
