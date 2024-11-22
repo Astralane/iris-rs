@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use solana_sdk::transaction::VersionedTransaction;
 use std::sync::Arc;
-use tokio::time::Instant;
+use std::time::Instant;
 use tracing::error;
 
 #[derive(Clone, Debug)]
@@ -9,8 +9,24 @@ pub struct TransactionData {
     pub wire_transaction: Vec<u8>,
     pub versioned_transaction: VersionedTransaction,
     pub sent_at: Instant,
+    pub slot: u64,
     pub retry_count: usize,
-    pub max_retries: usize,
+}
+
+impl TransactionData {
+    pub fn new(
+        wire_transaction: Vec<u8>,
+        versioned_transaction: VersionedTransaction,
+        slot: u64,
+    ) -> Self {
+        Self {
+            wire_transaction,
+            versioned_transaction,
+            sent_at: Instant::now(),
+            slot,
+            retry_count: 0,
+        }
+    }
 }
 
 pub trait TransactionStore: Send + Sync {
@@ -35,11 +51,7 @@ impl TransactionStoreImpl {
 }
 
 impl TransactionStore for TransactionStoreImpl {
-    fn has_signature(&self, signature: &str) -> bool {
-        self.transactions.contains_key(signature)
-    }
     fn add_transaction(&self, transaction: TransactionData) {
-        let start = Instant::now();
         if let Some(signature) = get_signature(&transaction) {
             if self.transactions.contains_key(&signature) {
                 return;
@@ -50,7 +62,6 @@ impl TransactionStore for TransactionStoreImpl {
         }
     }
     fn get_signatures(&self) -> Vec<String> {
-        let start = Instant::now();
         let signatures = self
             .transactions
             .iter()
@@ -59,12 +70,14 @@ impl TransactionStore for TransactionStoreImpl {
         signatures
     }
     fn remove_transaction(&self, signature: String) -> Option<TransactionData> {
-        let start = Instant::now();
         let transaction = self.transactions.remove(&signature);
         transaction.map_or(None, |t| Some(t.1))
     }
     fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>> {
         self.transactions.clone()
+    }
+    fn has_signature(&self, signature: &str) -> bool {
+        self.transactions.contains_key(signature)
     }
 }
 
