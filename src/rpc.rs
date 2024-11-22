@@ -12,4 +12,11 @@ pub trait IrisRpc {
         txn: String,
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String>;
+
+    #[method(name = "sendTransactionBatch")]
+    async fn send_transaction_batch(
+        &self,
+        txns: Vec<String>,
+        params: RpcSendTransactionConfig,
+    ) -> RpcResult<Vec<String>>;
 }

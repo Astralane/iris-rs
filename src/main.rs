@@ -22,6 +22,7 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -124,11 +125,17 @@ async fn main() -> anyhow::Result<()> {
 
     let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
         Handle::current(),
-        shutdown,
+        shutdown.clone(),
         10000,
         Arc::new(ws_client),
     ));
-    let iris = IrisRpcServerImpl::new(tx_client, txn_store, chain_state);
+    let iris = IrisRpcServerImpl::new(
+        tx_client,
+        txn_store,
+        chain_state,
+        Duration::from_secs(config.retry_interval_seconds as u64),
+        shutdown,
+    );
 
     let server = ServerBuilder::default()
         .max_request_body_size(15_000_000)
