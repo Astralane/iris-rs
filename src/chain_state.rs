@@ -101,22 +101,18 @@ fn spawn_block_listener(
                     if let Some(block) = block_update.block {
                         let slot = block_update.slot;
                         let _block_time = block.block_time;
-                        if let Some(transactions) = block.transactions {
-                            for transaction in transactions {
-                                let signature = transaction
-                                    .transaction
-                                    .decode()
-                                    .map(|t| t.get_signature().to_string());
-                                if let Some(signature) = signature {
-                                    // add to seen signatures
-                                    signature_store.insert(signature, slot);
-                                }
+                        debug!("Block update: {:?}", slot);
+                        if let Some(signatures) = block.signatures {
+                            for signature in signatures {
+                                signature_store.insert(signature, slot);
                             }
                         }
                         // remove old signatures to prevent leak of memory < slot - retain_slot_count
                         signature_store.retain(|_, v| *v > slot - retain_slot_count);
+                        gauge!("iris_signature_store_size").set(signature_store.len() as f64);
                     }
                 }
+                error!("Block stream ended unexpectedly!!");
                 drop(stream);
                 unsub().await;
                 //critical error

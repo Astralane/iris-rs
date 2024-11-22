@@ -42,7 +42,7 @@ pub struct Config {
     ws_url: String,
     address: SocketAddr,
     identity_keypair_file: Option<String>,
-    max_retries: usize,
+    max_retries: u32,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
     //Whether to skip checking the transaction blockhash expiration.
@@ -128,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
     let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
         Handle::current(),
         shutdown.clone(),
-        10000,
+        800, // around 4 mins
         Arc::new(ws_client),
     ));
     let iris = IrisRpcServerImpl::new(
@@ -137,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
         chain_state,
         Duration::from_secs(config.retry_interval_seconds as u64),
         shutdown.clone(),
+        config.max_retries,
     );
 
     let server = ServerBuilder::default()

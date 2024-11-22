@@ -5,7 +5,7 @@ use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
-use metrics::{counter, histogram};
+use metrics::{counter, gauge, histogram};
 use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::transaction::VersionedTransaction;
@@ -20,6 +20,7 @@ pub struct IrisRpcServerImpl {
     store: Arc<dyn TransactionStore>,
     chain_state: Arc<dyn ChainStateClient>,
     retry_interval: Duration,
+    max_retries: u32,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -37,12 +38,14 @@ impl IrisRpcServerImpl {
         chain_state: Arc<dyn ChainStateClient>,
         retry_interval: Duration,
         shutdown: Arc<AtomicBool>,
+        max_retries: u32,
     ) -> Self {
         let client = IrisRpcServerImpl {
             txn_sender,
             store,
             chain_state,
             retry_interval,
+            max_retries,
         };
         client.spawn_retry_transactions_loop(shutdown);
         client
@@ -53,6 +56,8 @@ impl IrisRpcServerImpl {
         let chain_state = self.chain_state.clone();
         let txn_sender = self.txn_sender.clone();
         let retry_interval = self.retry_interval;
+        let max_retries = self.max_retries;
+
         tokio::spawn(async move {
             loop {
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -62,9 +67,15 @@ impl IrisRpcServerImpl {
                 let transactions_map = store.get_transactions();
                 let mut transactions_to_remove = vec![];
                 let mut transactions_to_send = vec![];
+                gauge!("iris_retry_transactions").set(transactions_map.len() as f64);
 
                 for mut txn in transactions_map.iter_mut() {
                     if let Some(slot) = chain_state.confirm_signature_status(&txn.key()) {
+                        info!(
+                            "Transaction confirmed at slot: {slot} latency {:}",
+                            slot.saturating_sub(txn.slot)
+                        );
+                        counter!("iris_txn_landed").increment(1);
                         histogram!("iris_txn_slot_latency")
                             .record(slot.saturating_sub(txn.slot) as f64);
                         transactions_to_remove.push(txn.key().clone());
@@ -74,13 +85,14 @@ impl IrisRpcServerImpl {
                         transactions_to_remove.push(txn.key().clone());
                     }
                     //check if max retries has been reached
-                    if txn.value().retry_count >= txn.retry_count {
+                    if txn.retry_count >= max_retries as usize {
                         transactions_to_remove.push(txn.key().clone());
                     }
                     txn.retry_count += 1;
                     transactions_to_send.push(txn.wire_transaction.clone());
                 }
 
+                gauge!("iris_transactions_removed").increment(transactions_to_remove.len() as f64);
                 for signature in transactions_to_remove {
                     store.remove_transaction(signature);
                 }
@@ -106,7 +118,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
-        counter!("iris_txn_total_transactions").increment(1);
         if self.store.has_signature(&txn) {
             counter!("iris_error", "type" => "duplicate_transaction").increment(1);
             return Err(invalid_request("duplicate transaction"));
