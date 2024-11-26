@@ -208,7 +208,8 @@ fn spawn_grpc_block_listener(
     runtime.spawn(async move {
         let mut retries = 0;
         loop {
-            if retries >= max_retries {
+            retries += 1;
+            if retries > max_retries {
                 error!("Max retries reached, shutting down geyser grpc block listener");
                 shutdown.store(true, Ordering::Relaxed);
                 return;
@@ -217,8 +218,7 @@ fn spawn_grpc_block_listener(
             let client = GeyserGrpcClient::build_from_shared(endpoint.clone());
             if let Err(e) = client {
                 error!("Error creating geyser grpc client: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(RETRY_INTERVAL)).await;
-                retries += 1;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
 
@@ -226,24 +226,21 @@ fn spawn_grpc_block_listener(
             let connection = client.connect().await;
             if let Err(e) = connection {
                 error!("Error subscribing to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(RETRY_INTERVAL)).await;
-                retries += 1;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
 
             let subscription = connection.unwrap().subscribe().await;
             if let Err(e) = subscription {
                 error!("Error subscribing to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(RETRY_INTERVAL)).await;
-                retries += 1;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
 
             let (mut grpc_tx, mut grpc_rx) = subscription.unwrap();
             if let Err(e) = grpc_tx.send(block_subscribe_request!()).await {
                 error!("Error sending subscription request: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(RETRY_INTERVAL)).await;
-                retries += 1;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
             'event_loop: while let Some(update) = grpc_rx.next().await {
@@ -265,10 +262,7 @@ fn spawn_grpc_block_listener(
                         }
                         Some(UpdateOneof::Ping(_)) => {
                             if let Err(e) = grpc_tx
-                                .send(SubscribeRequest {
-                                    ping: Some(SubscribeRequestPing { id: 1 }),
-                                    ..Default::default()
-                                })
+                                .send(ping_request!())
                                 .await
                             {
                                 error!("Error sending ping: {}", e);
@@ -287,7 +281,6 @@ fn spawn_grpc_block_listener(
                     }
                 }
             }
-            retries += 1;
         }
     })
 }

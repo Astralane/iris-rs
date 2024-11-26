@@ -1,5 +1,4 @@
 #![warn(unused_crate_dependencies)]
-#![warn(clippy::all)]
 
 use crate::chain_state::ChainStateWsClient;
 use crate::connection_cache_client::ConnectionCacheClient;
@@ -131,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         shutdown.clone(),
         800, // around 4 mins
         Arc::new(ws_client),
-        config.grpc_url
+        config.grpc_url,
     ));
     let iris = IrisRpcServerImpl::new(
         tx_client,
