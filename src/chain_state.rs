@@ -18,6 +18,7 @@ use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 use yellowstone_grpc_client::GeyserGrpcClient;
+use yellowstone_grpc_proto::geyser::SubscribeRequestFilterBlocks;
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{
     SubscribeRequest, SubscribeRequestFilterSlots, SubscribeRequestPing,
@@ -38,10 +39,13 @@ macro_rules! ping_request {
 macro_rules! block_subscribe_request {
     () => {
         SubscribeRequest {
-            slots: HashMap::from_iter(vec![(
+            blocks: HashMap::from_iter(vec![(
                 generate_random_string(20).to_string(),
-                SubscribeRequestFilterSlots {
-                    filter_by_commitment: Some(true),
+                SubscribeRequestFilterBlocks {
+                    account_include: vec![],
+                    include_transactions: Some(true),
+                    include_accounts: Some(false),
+                    include_entries: Some(false),
                 },
             )]),
             ..Default::default()
@@ -238,6 +242,7 @@ fn spawn_grpc_block_listener(
             }
 
             let (mut grpc_tx, mut grpc_rx) = subscription.unwrap();
+            info!("Subscribing to block updates..");
             if let Err(e) = grpc_tx.send(block_subscribe_request!()).await {
                 error!("Error sending subscription request: {:?}", e);
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -247,7 +252,6 @@ fn spawn_grpc_block_listener(
                 if shutdown.load(Ordering::Relaxed) {
                     return;
                 }
-
                 match update {
                     Ok(message) => match message.update_oneof {
                         Some(UpdateOneof::Block(block)) => {
@@ -261,10 +265,7 @@ fn spawn_grpc_block_listener(
                             signature_store.retain(|_, v| *v > slot - retain_slot_count);
                         }
                         Some(UpdateOneof::Ping(_)) => {
-                            if let Err(e) = grpc_tx
-                                .send(ping_request!())
-                                .await
-                            {
+                            if let Err(e) = grpc_tx.send(ping_request!()).await {
                                 error!("Error sending ping: {}", e);
                                 break 'event_loop;
                             }
