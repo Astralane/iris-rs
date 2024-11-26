@@ -1,6 +1,7 @@
-use crate::utils::ChainStateClient;
+use std::collections::HashMap;
+use crate::utils::{generate_random_string, ChainStateClient};
 use dashmap::DashMap;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use log::error;
 use metrics::gauge;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
+use yellowstone_grpc_client::{GeyserGrpcBuilderResult, GeyserGrpcClient};
 
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
@@ -39,14 +41,14 @@ impl ChainStateWsClient {
         let current_slot = Arc::new(AtomicU64::new(0));
         let signature_store = Arc::new(DashMap::new());
         let mut hdl = Vec::new();
-        hdl.push(spawn_block_listener(
+        hdl.push(spawn_ws_block_listener(
             runtime.clone(),
             shutdown.clone(),
             signature_store.clone(),
             retain_slot_count,
             ws_client.clone(),
         ));
-        hdl.push(spawn_slot_listener(
+        hdl.push(spawn_ws_slot_listener(
             runtime.clone(),
             shutdown,
             current_slot.clone(),
@@ -70,7 +72,7 @@ impl ChainStateClient for ChainStateWsClient {
         self.signature_store.get(signature).map(|v| *v)
     }
 }
-fn spawn_block_listener(
+fn spawn_ws_block_listener(
     runtime: Handle,
     shutdown: Arc<AtomicBool>,
     signature_store: Arc<SignatureStore>,
@@ -127,7 +129,7 @@ fn spawn_block_listener(
     })
 }
 
-fn spawn_slot_listener(
+fn spawn_ws_slot_listener(
     runtime: Handle,
     shutdown: Arc<AtomicBool>,
     current_slot: Arc<AtomicU64>,
@@ -154,3 +156,36 @@ fn spawn_slot_listener(
         shutdown.store(true, Ordering::Relaxed);
     })
 }
+
+fn spawn_grpc_block_listener(
+    runtime: Handle,
+    shutdown: Arc<AtomicBool>,
+    signature_store: Arc<SignatureStore>,
+    retain_slot_count: u64,
+    endpoint: String,
+) -> JoinHandle<()> {
+    let client = GeyserGrpcClient::build_from_shared(endpoint).unwrap_or_else(|e| {
+        error!("Failed to build grpc client: {:?}", e);
+        shutdown.store(true, Ordering::Relaxed);
+        return;
+    });
+    runtime.spawn(async move {
+
+    })
+}
+
+// async fn subscribe_to_blocks(endpoint: String) -> anyhow::Result<()>{
+//     let mut client = GeyserGrpcClient::build_from_shared(endpoint)?.connect().await?;
+//     let (mut grpc_tx, grpc_rx) = client.subscribe().await?;
+//     let request =  SubscribeRequest {
+//         slots: HashMap::from_iter(vec![(
+//             generate_random_string(20).to_string(),
+//             SubscribeRequestFilterSlots {
+//                 filter_by_commitment: Some(true),
+//             },
+//         )]),
+//         ..Default::default()
+//     };
+//     grpc_tx.send(request).await?;
+//     Ok(grpc_tx)
+// }
