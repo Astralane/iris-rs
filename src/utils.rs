@@ -22,7 +22,6 @@ pub trait CreateClient: SendTransactionClient {
     ) -> Self;
 }
 
-
 pub fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
