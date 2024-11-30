@@ -229,7 +229,7 @@ fn spawn_grpc_block_listener(
             let client = client.unwrap();
             let connection = client.connect().await;
             if let Err(e) = connection {
-                error!("Error subscribing to geyser grpc: {:?}", e);
+                error!("Error connecting to geyser grpc: {:?}", e);
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
@@ -263,6 +263,7 @@ fn spawn_grpc_block_listener(
                             }
                             // remove old signatures to prevent leak of memory < slot - retain_slot_count
                             signature_store.retain(|_, v| *v > slot - retain_slot_count);
+                            gauge!("iris_signature_store_size").set(signature_store.len() as f64);
                         }
                         Some(UpdateOneof::Ping(_)) => {
                             if let Err(e) = grpc_tx.send(ping_request!()).await {
@@ -276,7 +277,7 @@ fn spawn_grpc_block_listener(
                         }
                     },
                     Err(e) => {
-                        error!("Error subscribing to block updates {:?}", e);
+                        error!("Error block updates subscription {:?}", e);
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         break 'event_loop;
                     }

@@ -145,6 +145,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 }
             };
         let signature = versioned_transaction.get_signature().to_string();
+        info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
         let transaction = TransactionData::new(wire_transaction, versioned_transaction, slot);
         // add to store
