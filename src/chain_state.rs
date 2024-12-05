@@ -131,7 +131,7 @@ fn spawn_ws_block_listener(
             show_rewards: Some(false),
             max_supported_transaction_version: Some(0),
         });
-        info!("Subscribing to block updates");
+        info!("Subscribing to ws block updates");
         match ws_client
             .block_subscribe(RpcBlockSubscribeFilter::All, config)
             .await
@@ -242,7 +242,7 @@ fn spawn_grpc_block_listener(
             }
 
             let (mut grpc_tx, mut grpc_rx) = subscription.unwrap();
-            info!("Subscribing to block updates..");
+            info!("Subscribing to grpc block updates..");
             if let Err(e) = grpc_tx.send(block_subscribe_request!()).await {
                 error!("Error sending subscription request: {:?}", e);
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -256,6 +256,7 @@ fn spawn_grpc_block_listener(
                     Ok(message) => match message.update_oneof {
                         Some(UpdateOneof::Block(block)) => {
                             let slot = block.slot;
+                            debug!("Block update: {:?}", slot);
                             for transaction in block.transactions {
                                 let signature = Signature::try_from(transaction.signature)
                                     .expect("Invalid signature");
