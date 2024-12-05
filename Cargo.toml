@@ -11,6 +11,9 @@ solana-sdk = { git = "https://github.com/anza-xyz/agave.git", default-features =
 solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git" }
 solana-connection-cache = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
 
+yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1" }
+yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1", default-features = false }
+
 jsonrpsee = {version = "=0.24.5", features = ["server", "http-client", "macros"]}
 tokio = "1.40.0"
 env_logger = "0.11.5"
@@ -29,6 +32,7 @@ metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16.0"
 futures-util = "0.3.31"
 rustls = { version = "0.23.17", features = ["ring"]  }
+rand = "0.8.5"
 
 [patch.crates-io]
 solana-program = { git = "https://github.com/anza-xyz/agave.git" }

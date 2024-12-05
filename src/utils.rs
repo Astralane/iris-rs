@@ -1,3 +1,5 @@
+use rand::distributions::Alphanumeric;
+use rand::Rng;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use tokio::runtime::Handle;
@@ -18,4 +20,12 @@ pub trait CreateClient: SendTransactionClient {
         leader_forward_count: u64,
         validator_identity: Keypair,
     ) -> Self;
+}
+
+pub fn generate_random_string(len: usize) -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }

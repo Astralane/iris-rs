@@ -1,5 +1,4 @@
 #![warn(unused_crate_dependencies)]
-#![warn(clippy::all)]
 
 use crate::chain_state::ChainStateWsClient;
 use crate::connection_cache_client::ConnectionCacheClient;
@@ -42,6 +41,7 @@ pub struct Config {
     ws_url: String,
     address: SocketAddr,
     identity_keypair_file: Option<String>,
+    grpc_url: Option<String>,
     max_retries: u32,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
@@ -130,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         shutdown.clone(),
         800, // around 4 mins
         Arc::new(ws_client),
+        config.grpc_url,
     ));
     let iris = IrisRpcServerImpl::new(
         tx_client,
