@@ -155,5 +155,5 @@ async fn main() -> anyhow::Result<()> {
     }
     server_hdl.stop()?;
     server_hdl.stopped().await;
-    Ok(())
+    Err(anyhow!("server stopped"))
 }

@@ -21,7 +21,7 @@ use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::geyser::SubscribeRequestFilterBlocks;
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{
-    SubscribeRequest, SubscribeRequestFilterSlots, SubscribeRequestPing,
+    SubscribeRequest, SubscribeRequestPing,
 };
 
 const RETRY_INTERVAL: u64 = 1000;
@@ -226,7 +226,10 @@ fn spawn_grpc_block_listener(
                 continue;
             }
 
-            let client = client.unwrap();
+            let client = client.unwrap()
+                .max_encoding_message_size(64 * 1024 * 1024)
+                .max_decoding_message_size(64 * 1024 * 1024);
+
             let connection = client.connect().await;
             if let Err(e) = connection {
                 error!("Error connecting to geyser grpc: {:?}", e);
