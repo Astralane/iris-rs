@@ -19,6 +19,7 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,5 +156,5 @@ async fn main() -> anyhow::Result<()> {
     }
     server_hdl.stop()?;
     server_hdl.stopped().await;
-    Err(anyhow!("server stopped"))
+    process::exit(1);
 }

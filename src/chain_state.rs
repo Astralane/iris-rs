@@ -16,9 +16,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tracing::{debug, info};
 use yellowstone_grpc_client::GeyserGrpcClient;
-use yellowstone_grpc_proto::geyser::SubscribeRequestFilterBlocks;
+use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBlocks};
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{
     SubscribeRequest, SubscribeRequestPing,
@@ -48,6 +49,7 @@ macro_rules! block_subscribe_request {
                     include_entries: Some(false),
                 },
             )]),
+            commitment: Some(CommitmentLevel::Confirmed as i32),
             ..Default::default()
         }
     };
@@ -195,6 +197,7 @@ fn spawn_ws_slot_listener(
             gauge!("iris_current_slot").set(slot as f64);
             current_slot.store(slot, Ordering::SeqCst);
         }
+        error!("Slot stream ended unexpectedly!!");
         drop(stream);
         unsub().await;
         shutdown.store(true, Ordering::Relaxed);
@@ -251,7 +254,8 @@ fn spawn_grpc_block_listener(
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
-            'event_loop: while let Some(update) = grpc_rx.next().await {
+            'event_loop: while let Ok(Some(update)) = timeout(Duration::from_secs(60), grpc_rx.next()).await {
+                retries = 0;
                 if shutdown.load(Ordering::Relaxed) {
                     return;
                 }
