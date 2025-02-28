@@ -56,7 +56,6 @@ impl IrisRpcServerImpl {
         let chain_state = self.chain_state.clone();
         let txn_sender = self.txn_sender.clone();
         let retry_interval = self.retry_interval;
-        let max_retries = self.max_retries;
 
         tokio::spawn(async move {
             loop {
@@ -85,10 +84,10 @@ impl IrisRpcServerImpl {
                         transactions_to_remove.push(txn.key().clone());
                     }
                     //check if max retries has been reached
-                    if txn.retry_count >= max_retries as usize {
+                    if txn.retry_count == 0usize {
                         transactions_to_remove.push(txn.key().clone());
                     }
-                    txn.retry_count += 1;
+                    txn.retry_count = txn.retry_count.saturating_sub(1);
                     transactions_to_send.push(txn.wire_transaction.clone());
                 }
 
@@ -109,7 +108,7 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "Ok".to_string()
+        "Ok(1.1)".to_string()
     }
 
     async fn send_transaction(
@@ -147,7 +146,12 @@ impl IrisRpcServer for IrisRpcServerImpl {
         let signature = versioned_transaction.get_signature().to_string();
         info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
-        let transaction = TransactionData::new(wire_transaction, versioned_transaction, slot);
+        let transaction = TransactionData::new(
+            wire_transaction,
+            versioned_transaction,
+            slot,
+            params.max_retries.unwrap_or(self.max_retries as usize),
+        );
         // add to store
         self.store.add_transaction(transaction.clone());
         self.txn_sender
@@ -195,7 +199,12 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 };
             let signature = versioned_transaction.get_signature().to_string();
             let slot = self.chain_state.get_slot();
-            let transaction = TransactionData::new(wire_transaction, versioned_transaction, slot);
+            let transaction = TransactionData::new(
+                wire_transaction,
+                versioned_transaction,
+                slot,
+                params.max_retries.unwrap_or(self.max_retries as usize),
+            );
             // add to store
             self.store.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);

@@ -18,13 +18,14 @@ impl TransactionData {
         wire_transaction: Vec<u8>,
         versioned_transaction: VersionedTransaction,
         slot: u64,
+        retry_count: usize,
     ) -> Self {
         Self {
             wire_transaction,
             versioned_transaction,
             sent_at: Instant::now(),
             slot,
-            retry_count: 0,
+            retry_count,
         }
     }
 }
