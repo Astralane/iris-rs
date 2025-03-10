@@ -87,8 +87,10 @@ impl IrisRpcServerImpl {
                     if txn.retry_count == 0usize {
                         transactions_to_remove.push(txn.key().clone());
                     }
+                    if txn.retry_count > 0usize {
+                        transactions_to_send.push(txn.wire_transaction.clone());
+                    }
                     txn.retry_count = txn.retry_count.saturating_sub(1);
-                    transactions_to_send.push(txn.wire_transaction.clone());
                 }
 
                 gauge!("iris_transactions_removed").increment(transactions_to_remove.len() as f64);
@@ -96,6 +98,10 @@ impl IrisRpcServerImpl {
                     store.remove_transaction(signature);
                 }
 
+                info!(
+                    "retrying {} transactions",
+                    transactions_to_send.iter().len()
+                );
                 for batches in transactions_to_send.chunks(10) {
                     txn_sender.send_transaction_batch(batches.to_vec());
                 }
@@ -108,7 +114,7 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "Ok(1.1)".to_string()
+        "Ok(1.2)".to_string()
     }
 
     async fn send_transaction(
