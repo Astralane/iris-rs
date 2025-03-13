@@ -1,7 +1,6 @@
 #![warn(unused_crate_dependencies)]
 
 use crate::chain_state::ChainStateWsClient;
-use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
@@ -28,7 +27,6 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod chain_state;
-mod connection_cache_client;
 mod rpc;
 mod rpc_server;
 mod store;
@@ -79,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
             .with_env_filter(EnvFilter::from_env("RUST_LOG"))
             .finish(),
     )
-    .expect("Failed to set up tracing");
+        .expect("Failed to set up tracing");
 
     //read config from env variables
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
@@ -105,23 +103,13 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
-    let tx_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
-        log::info!("Using TpuClientNextSender");
-        Arc::new(TpuClientNextSender::create_client(
-            Handle::current(),
-            leader_updater,
-            config.lookahead_slots,
-            identity_keypair,
-        ))
-    } else {
-        log::info!("Using ConnectionCacheClient");
-        Arc::new(ConnectionCacheClient::create_client(
-            Handle::current(),
-            leader_updater,
-            config.lookahead_slots,
-            identity_keypair,
-        ))
-    };
+    let tx_client: Arc<dyn SendTransactionClient> = Arc::new(TpuClientNextSender::create_client(
+        Handle::current(),
+        leader_updater,
+        config.lookahead_slots,
+        identity_keypair,
+    ));
+
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
         .expect("Failed to connect to websocket");
