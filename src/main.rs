@@ -2,7 +2,7 @@
 
 use crate::chain_state::ChainStateWsClient;
 use crate::connection_cache_client::ConnectionCacheClient;
-use crate::rpc::IrisRpcServer;
+use crate::rpc::{IrisRpcServer, VersionResponse};
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
 use crate::utils::{ChainStateClient, CreateClient, SendTransactionClient};
@@ -44,6 +44,8 @@ pub struct Config {
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
     max_retries: u32,
+    solana_core_version: Option<String>,
+    feature_set: Option<u64>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
     //Whether to skip checking the transaction blockhash expiration.
@@ -140,6 +142,10 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(config.retry_interval_seconds as u64),
         shutdown.clone(),
         config.max_retries,
+        VersionResponse {
+            solana_core: config.solana_core_version.unwrap_or("iris".to_string()),
+            feature_set: config.feature_set.unwrap_or(0)
+        }
     );
 
     let server = ServerBuilder::default()

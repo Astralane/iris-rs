@@ -1,6 +1,14 @@
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
+use serde::{Deserialize, Serialize};
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct VersionResponse {
+    pub solana_core: String,
+    pub feature_set: u64
+}
 
 #[rpc(server)]
 pub trait IrisRpc {
@@ -19,4 +27,9 @@ pub trait IrisRpc {
         txns: Vec<String>,
         params: RpcSendTransactionConfig,
     ) -> RpcResult<Vec<String>>;
+
+    #[method(name = "getVersion")]
+    async fn get_version(
+        &self
+    ) -> RpcResult<VersionResponse>;
 }

@@ -1,4 +1,4 @@
-use crate::rpc::IrisRpcServer;
+use crate::rpc::{IrisRpcServer, VersionResponse};
 use crate::store::{TransactionData, TransactionStore};
 use crate::utils::{ChainStateClient, SendTransactionClient};
 use crate::vendor::solana_rpc::decode_and_deserialize;
@@ -21,6 +21,7 @@ pub struct IrisRpcServerImpl {
     chain_state: Arc<dyn ChainStateClient>,
     retry_interval: Duration,
     max_retries: u32,
+    version: VersionResponse
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -39,6 +40,7 @@ impl IrisRpcServerImpl {
         retry_interval: Duration,
         shutdown: Arc<AtomicBool>,
         max_retries: u32,
+        version: VersionResponse
     ) -> Self {
         let client = IrisRpcServerImpl {
             txn_sender,
@@ -46,6 +48,7 @@ impl IrisRpcServerImpl {
             chain_state,
             retry_interval,
             max_retries,
+            version
         };
         client.spawn_retry_transactions_loop(shutdown);
         client
@@ -218,5 +221,9 @@ impl IrisRpcServer for IrisRpcServerImpl {
         }
         self.txn_sender.send_transaction_batch(wired_transactions);
         Ok(signatures)
+    }
+
+    async fn get_version(&self) -> RpcResult<VersionResponse> {
+        Ok(self.version.clone())
     }
 }
