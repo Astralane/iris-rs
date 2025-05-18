@@ -1,21 +1,39 @@
 [workspace]
-members = ["iris-rpc"]
+members = ["iris-rpc", "quic-forwarder"]
 resolver = "2"
 
 [workspace.package]
 version = "0.0.1"
+edition = "2021"
 
 [workspace.dependencies]
-solana-tpu-client-next = { version = "~2.1.1", default-features = false }
-solana-client = { version = "~2.1.1" }
-solana-transaction-status = { version = "~2.1.1", default-features = false }
-solana-sdk = { version = "~2.1.1", default-features = false }
-solana-rpc-client-api = { version = "~2.1.1" }
-solana-connection-cache = { version = "~2.1.1", default-features = false }
+solana-tpu-client-next = { version = "~2.2.0" }
+solana-client = { version = "~2.2.0" }
+solana-transaction-status = { version = "~2.2.0"}
+solana-sdk = { version = "~2.2.0" }
+solana-rpc-client-api = { version = "~2.2.0" }
+solana-connection-cache = { version = "~2.2.0" }
+solana-net-utils = { version = "~2.2.0" }
+solana-streamer = { version = "~2.2.0" }
+solana-quic-definitions = { version = "~2.2.0" }
+solana-perf = { version = "~2.2.0" }
+solana-tls-utils = { version = "~2.2.0" }
+solana-packet = {version = "~2.2.0"}
 
-yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1" }
-yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1", default-features = false }
 
+yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v6.1.0+solana.2.2.14" }
+yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v6.1.0+solana.2.2.14", default-features = false }
+
+clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
+quinn = "0.11.8"
+quinn-proto = "0.11.12"
+socket2 = "0.5.9"
+bytes = "1.10.1"
+crossbeam-channel = {version = "0.5.15"}
+pem = "1.1.1"
+smallvec = "1.15.0"
+indexmap = "2.9.0"
+futures = "0.3.31"
 jsonrpsee = { version = "=0.24.5", features = ["server", "http-client", "macros"] }
 tokio = "1.40.0"
 env_logger = "0.11.5"

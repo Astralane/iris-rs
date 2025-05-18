@@ -33,6 +33,7 @@ mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
+mod quic_server;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -54,7 +55,6 @@ pub struct Config {
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
     lookahead_slots: u64,
-    use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
 }
@@ -121,7 +121,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(ws_client),
         config.grpc_url,
     ));
-    let iris = IrisRpcServerImpl::new(
+
+    let iris_rpc = IrisRpcServerImpl::new(
         tx_client,
         txn_store,
         chain_state,
@@ -130,14 +131,14 @@ async fn main() -> anyhow::Result<()> {
         config.max_retries,
     );
 
-    let server = ServerBuilder::default()
+    let rpc_server = ServerBuilder::default()
         .max_request_body_size(15_000_000)
-        .max_connections(1_000_000)
+        .max_connections(1_000)
         .build(config.address)
         .await?;
 
     info!("server starting in {:?}", config.address);
-    let server_hdl = server.start(iris.into_rpc());
+    let server_hdl = rpc_server.start(iris_rpc.into_rpc());
     //exit when shutdown is triggered
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;

@@ -1,9 +1,9 @@
 use crate::utils::{CreateClient, SendTransactionClient};
 use metrics::counter;
-use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     ConnectionWorkersSchedulerConfig, Fanout,
 };
+use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
