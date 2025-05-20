@@ -8,6 +8,8 @@ use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
 use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::system_instruction::SystemInstruction;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::atomic::AtomicBool;
@@ -15,13 +17,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
+const DEFAULT_MINIMUM_TIP: u64 = 1000;
+
 pub struct IrisRpcServerImpl {
     txn_sender: Arc<dyn SendTransactionClient>,
     store: Arc<dyn TransactionStore>,
     chain_state: Arc<dyn ChainStateClient>,
     retry_interval: Duration,
     max_retries: u32,
-    version: VersionResponse
+    version: VersionResponse,
+    tip_address: Option<Pubkey>,
+    minimum_tip: Option<u64>,
 }
 
 pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
@@ -40,7 +46,9 @@ impl IrisRpcServerImpl {
         retry_interval: Duration,
         shutdown: Arc<AtomicBool>,
         max_retries: u32,
-        version: VersionResponse
+        version: VersionResponse,
+        tip_address: Option<Pubkey>,
+        minimum_tip: Option<u64>,
     ) -> Self {
         let client = IrisRpcServerImpl {
             txn_sender,
@@ -48,10 +56,46 @@ impl IrisRpcServerImpl {
             chain_state,
             retry_interval,
             max_retries,
-            version
+            version,
+            tip_address,
+            minimum_tip,
         };
         client.spawn_retry_transactions_loop(shutdown);
         client
+    }
+
+    fn minimum_tip(&self) -> u64 {
+        self.minimum_tip.unwrap_or(DEFAULT_MINIMUM_TIP)
+    }
+
+    fn pays_minimum_tip(&self, tx: &VersionedTransaction) -> bool {
+        // unconfigured tip address, assume all transactions are valid
+        if self.tip_address.is_none() { return true };
+
+        // iterate each instruction and look for SystemProgram transfer instructions to the tip address
+        for instruction in tx.message.instructions() {
+            let static_keys = tx.message.static_account_keys();
+
+            if let Some(program_id) = static_keys.get(instruction.program_id_index as usize) {
+                if *program_id == solana_sdk::system_program::id() {
+                    match bincode::deserialize(&instruction.data) {
+                        Ok(SystemInstruction::Transfer { lamports }) => {
+
+                            if let Some(recipient_idx) = instruction.accounts.get(1)
+                                && let Some(recipient) = static_keys.get(*recipient_idx as usize)
+                                && recipient == self.tip_address.as_ref().unwrap()
+                                && lamports >= self.minimum_tip() {
+                                return true;
+                            }
+
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn spawn_retry_transactions_loop(&self, shutdown: Arc<AtomicBool>) {
@@ -152,6 +196,14 @@ impl IrisRpcServer for IrisRpcServerImpl {
                     return Err(invalid_request(&e.to_string()));
                 }
             };
+
+        if !self.pays_minimum_tip(&versioned_transaction) {
+            counter!("iris_error", "type" => "no_tip_or_pays_less_than_minimum_tip").increment(1);
+            return Err(invalid_request(
+                "no tip in the transaction or pays less than minimum tip",
+            ));
+        }
+
         let signature = versioned_transaction.get_signature().to_string();
         info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
