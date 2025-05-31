@@ -33,6 +33,7 @@ pub(crate) fn spawn_server(
         Arc::new(TokioRuntime),
     )
     .map_err(QuicServerError::EndpointFailed)?;
+    println!("Quic Server Listening on {:?}", endpoint.local_addr());
 
     let handle = tokio::spawn(run_server(
         endpoint,

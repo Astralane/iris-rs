@@ -1,3 +1,3 @@
 pub mod forwarder;
 pub mod quic_server;
-mod vendor;
+pub mod vendor;

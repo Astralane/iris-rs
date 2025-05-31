@@ -3,6 +3,10 @@ name = "quic-forwarder"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+crate-type = ["lib"]
+name = "iris_quic_forwarder"
+
 [dependencies]
 solana-sdk = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -22,3 +26,8 @@ smallvec = { workspace = true }
 indexmap = { workspace = true }
 futures = { workspace = true }
 pem = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
+solana-tpu-client-next = { workspace = true }
