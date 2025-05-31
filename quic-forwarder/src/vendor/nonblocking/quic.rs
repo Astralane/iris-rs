@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use smallvec::SmallVec;
 use solana_perf::packet::{Meta, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::trace;
 
 // A struct to accumulate the bytes making up

@@ -1,5 +1,3 @@
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::Arc;
 use pem::Pem;
 use quinn::rustls::KeyLogFile;
 use quinn::ServerConfig;
@@ -12,6 +10,8 @@ use solana_sdk::signature::Keypair;
 use solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID;
 use solana_streamer::quic::QuicServerError;
 use solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::Arc;
 
 pub fn configure_server(
     identity_keypair: &Keypair,

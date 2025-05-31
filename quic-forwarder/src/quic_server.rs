@@ -1,10 +1,14 @@
 use crate::vendor::nonblocking::quic::{packet_batch_sender, PacketAccumulator};
+use crate::vendor::quic::configure_server;
 use bytes::Bytes;
 use crossbeam_channel::{Sender, TrySendError};
-use quinn::{Connecting, Endpoint};
+use quinn::{Connecting, Endpoint, TokioRuntime};
+use quinn_proto::EndpointConfig;
 use solana_perf::packet::{Meta, PacketBatch, PACKET_DATA_SIZE};
 use solana_quic_definitions::QUIC_CONNECTION_HANDSHAKE_TIMEOUT;
+use solana_sdk::signature::Keypair;
 use solana_streamer::quic::QuicServerError;
+use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,42 +16,32 @@ use std::{array, thread};
 use tracing::log::debug;
 use tracing::{error, warn};
 
-pub fn spawn_server(
-    thread_name: &'static str,
-    endpoint: Endpoint,
+pub(crate) fn spawn_server(
+    tpu_socket: UdpSocket,
+    keypair: Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     wait_for_chunk_timeout: Duration,
     qcoalesce: Duration,
     coalesce_channel_size: usize,
-    threads: usize,
-) -> Result<thread::JoinHandle<()>, QuicServerError> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(threads)
-        .thread_name(format!("{thread_name}Rt"))
-        .enable_all()
-        .build()
-        .unwrap();
+) -> Result<tokio::task::JoinHandle<()>, QuicServerError> {
+    let (config, _) = configure_server(&keypair)?;
+    let endpoint = Endpoint::new(
+        EndpointConfig::default(),
+        Some(config.clone()),
+        tpu_socket,
+        Arc::new(TokioRuntime),
+    )
+    .map_err(QuicServerError::EndpointFailed)?;
 
-    let task = {
-        let _guard = runtime.enter();
-        tokio::spawn(run_server(
-            endpoint,
-            packet_sender,
-            exit,
-            wait_for_chunk_timeout,
-            qcoalesce,
-            coalesce_channel_size,
-        ))
-    };
-    let handle = std::thread::Builder::new()
-        .name(thread_name.into())
-        .spawn(move || {
-            if let Err(e) = runtime.block_on(task) {
-                warn!("error from runtime.block_on: {:?}", e);
-            }
-        })
-        .unwrap();
+    let handle = tokio::spawn(run_server(
+        endpoint,
+        packet_sender,
+        exit,
+        wait_for_chunk_timeout,
+        qcoalesce,
+        coalesce_channel_size,
+    ));
     Ok(handle)
 }
 

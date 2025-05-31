@@ -1,9 +1,9 @@
 use crate::utils::{CreateClient, SendTransactionClient};
 use metrics::counter;
+use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     ConnectionWorkersSchedulerConfig, Fanout,
 };
-use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
@@ -40,7 +40,7 @@ fn spawn_tpu_client_send_txs(
     leader_forward_count: u64,
     validator_identity: Keypair,
 ) -> TpuClientNextSender {
-    let (sender, receiver) = tokio::sync::mpsc::channel(16);
+    let (sender, receiver) = tokio::sync::mpsc::channel(128);
     let cancel = CancellationToken::new();
     let _handle = runtime_handle.spawn({
         let cancel = cancel.clone();
@@ -48,14 +48,17 @@ fn spawn_tpu_client_send_txs(
             let config = ConnectionWorkersSchedulerConfig {
                 bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
                 stake_identity: Some(validator_identity),
-                // to match MAX_CONNECTIONS from ConnectionCache
-                num_connections: 1024,
+                // Cache size of 128 covers all nodes above the P90 slot count threshold,
+                // which together account for ~75% of total slots in the epoch.
+                num_connections: 128,
                 skip_check_transaction_age: true,
-                worker_channel_size: 128,
+                worker_channel_size: 2,
                 max_reconnect_attempts: 4,
+                // Send to the next leader only, but verify that connections exist
+                // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
                 leaders_fanout: Fanout {
-                    connect: leader_forward_count as usize,
                     send: leader_forward_count as usize,
+                    connect: leader_forward_count as usize,
                 },
             };
             let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
@@ -81,12 +84,12 @@ impl SendTransactionClient for TpuClientNextSender {
     fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
         counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
         let txn_batch = TransactionBatch::new(wire_transactions);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            if let Err(e) = sender.send(txn_batch).await {
-                error!("Failed to send transaction: {:?}", e);
-                counter!("iris_error", "type" => "cannot_send_local").increment(1);
-            }
-        });
+        if let Err(e) = self.sender.try_send(txn_batch) {
+            error!(
+                "Failed to send transaction batch to tpu client next: {:?}",
+                e
+            );
+            counter!("iris_tx_send_to_tpu_client_next_error").increment(1);
+        }
     }
 }
