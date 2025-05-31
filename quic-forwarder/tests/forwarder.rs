@@ -1,7 +1,6 @@
 use iris_quic_forwarder::forwarder::IrisQuicForwarder;
-use iris_quic_forwarder::vendor::quic_networking::{create_client_config, create_client_endpoint};
-use quinn::{Connection, Endpoint, TokioRuntime};
-use quinn_proto::EndpointConfig;
+use iris_quic_forwarder::vendor::quic_networking::configure_client_endpoint;
+use quinn::Connection;
 use solana_sdk::hash::Hash;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::message::v0::Message;
@@ -10,8 +9,6 @@ use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{EncodableKey, Keypair, Signer};
 use solana_sdk::transaction::VersionedTransaction;
-use solana_tls_utils::QuicClientCertificate;
-use solana_tpu_client_next::ConnectionWorkersSchedulerError;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -31,7 +28,7 @@ impl Producer {
         dest_socket: SocketAddr,
         interval: Duration,
     ) -> Self {
-        let mut endpoint = Self::setup_endpoint(socket, Some(&signer)).unwrap();
+        let endpoint = configure_client_endpoint(socket, Some(&signer)).unwrap();
         let connecting = endpoint.connect(dest_socket, "producer").unwrap();
         let connection = connecting.await.unwrap();
         Self {
@@ -39,16 +36,6 @@ impl Producer {
             connection,
             interval,
         }
-    }
-
-    fn setup_endpoint(
-        bind: SocketAddr,
-        stake_identity: Option<&Keypair>,
-    ) -> anyhow::Result<Endpoint> {
-        let client_certificate = QuicClientCertificate::new(stake_identity);
-        let client_config = create_client_config(client_certificate);
-        let endpoint = create_client_endpoint(bind, client_config)?;
-        Ok(endpoint)
     }
 
     pub async fn send_transactions(&self) {

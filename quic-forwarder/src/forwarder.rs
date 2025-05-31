@@ -1,7 +1,4 @@
-use crate::vendor::quic::configure_server;
 use crossbeam_channel::Sender;
-use quinn::{Endpoint, TokioRuntime};
-use quinn_proto::EndpointConfig;
 use solana_perf::packet::PacketBatch;
 use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use solana_sdk::signature::Keypair;
@@ -11,7 +8,6 @@ use std::net::UdpSocket;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
-use std::thread::JoinHandle;
 use tracing::warn;
 
 pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;

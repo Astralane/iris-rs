@@ -12,9 +12,9 @@ use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::{array, thread};
+use std::array;
 use tracing::log::debug;
-use tracing::{error, warn};
+use tracing::error;
 
 pub(crate) fn spawn_server(
     tpu_socket: UdpSocket,

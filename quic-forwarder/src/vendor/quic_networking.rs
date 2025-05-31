@@ -1,12 +1,23 @@
 use anyhow::anyhow;
-use quinn::{Endpoint, WriteError};
+use quinn::Endpoint;
 use quinn_proto::crypto::rustls::QuicClientConfig;
-use quinn_proto::{ClientConfig, ConnectError, ConnectionError, IdleTimeout, TransportConfig};
+use quinn_proto::{ClientConfig, IdleTimeout, TransportConfig};
 use solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS};
 use solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID;
 use solana_tls_utils::{tls_client_config_builder, QuicClientCertificate};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use solana_sdk::signature::Keypair;
+
+pub fn configure_client_endpoint(
+    bind: SocketAddr,
+    stake_identity: Option<&Keypair>,
+) -> anyhow::Result<Endpoint> {
+    let client_certificate = QuicClientCertificate::new(stake_identity);
+    let client_config = create_client_config(client_certificate);
+    let endpoint = create_client_endpoint(bind, client_config)?;
+    Ok(endpoint)
+}
 
 pub fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
     // adapted from QuicLazyInitializedEndpoint::create_endpoint
