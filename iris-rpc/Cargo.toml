@@ -9,6 +9,7 @@ solana-client = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-sdk = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-version = { workspace = true }
 
 yellowstone-grpc-client = { workspace = true }
 yellowstone-grpc-proto = { workspace = true }
