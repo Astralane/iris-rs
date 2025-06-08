@@ -8,6 +8,7 @@ use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
 use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
+use solana_rpc_client_api::response::RpcVersionInfo;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::atomic::AtomicBool;
@@ -114,7 +115,14 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "Ok(1.2)".to_string()
+        "Ok(1.3)".to_string()
+    }
+    fn get_version(&self) -> RpcResult<RpcVersionInfo> {
+        let version = solana_version::Version::default();
+        Ok(RpcVersionInfo {
+            solana_core: version.to_string(),
+            feature_set: Some(version.feature_set),
+        })
     }
 
     async fn send_transaction(

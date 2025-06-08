@@ -2386,6 +2386,7 @@ dependencies = [
  "solana-sdk",
  "solana-tpu-client-next",
  "solana-transaction-status",
+ "solana-version",
  "tokio",
  "tokio-util",
  "tracing",

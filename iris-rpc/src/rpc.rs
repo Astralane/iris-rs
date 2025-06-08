@@ -1,6 +1,7 @@
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
+use solana_rpc_client_api::response::RpcVersionInfo;
 
 #[rpc(server)]
 pub trait IrisRpc {
@@ -12,7 +13,8 @@ pub trait IrisRpc {
         txn: String,
         params: RpcSendTransactionConfig,
     ) -> RpcResult<String>;
-
+    #[method(name = "getVersion")]
+    async fn get_version(&self) -> RpcResult<RpcVersionInfo>;
     #[method(name = "sendTransactionBatch")]
     async fn send_transaction_batch(
         &self,
