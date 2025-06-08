@@ -12,9 +12,63 @@ use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::array;
+use std::{array, thread};
+use solana_sdk::net::DEFAULT_TPU_COALESCE;
+use solana_streamer::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT;
 use tracing::log::debug;
-use tracing::error;
+use tracing::{error, warn};
+
+
+pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
+
+pub struct IrisQuicServer {
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl IrisQuicServer {
+    pub fn create_new(
+        thread_name: &str,
+        tpu_socket: UdpSocket,
+        tpu_sender: Sender<PacketBatch>,
+        identity_keypair: Keypair,
+        exit: Arc<AtomicBool>,
+        num_threads: usize,
+    ) -> Result<Self, QuicServerError> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(num_threads)
+            .thread_name(format!("{thread_name}Rt"))
+            .enable_all()
+            .build()
+            .unwrap();
+        let task = {
+            let _guard = runtime.enter();
+            let hdl = crate::quic_server::spawn_server(
+                tpu_socket,
+                identity_keypair,
+                tpu_sender,
+                exit,
+                DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+                DEFAULT_TPU_COALESCE,
+                DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+            );
+            hdl
+        };
+        let handle = std::thread::Builder::new()
+            .name(thread_name.into())
+            .spawn(move || {
+                if let Err(e) = runtime.block_on(task.unwrap()) {
+                    warn!("error from runtime.block_on: {:?}", e);
+                }
+            })
+            .unwrap();
+
+        Ok(Self { thread: handle })
+    }
+
+    pub fn join(self) -> thread::Result<()> {
+        self.thread.join()
+    }
+}
 
 pub(crate) fn spawn_server(
     tpu_socket: UdpSocket,

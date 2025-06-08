@@ -1,4 +1,4 @@
-use iris_quic_forwarder::forwarder::IrisQuicForwarder;
+use iris_quic_forwarder::quic_server::IrisQuicServer;
 use iris_quic_forwarder::vendor::quic_networking::configure_client_endpoint;
 use quinn::Connection;
 use solana_sdk::hash::Hash;
@@ -14,14 +14,14 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-struct Producer {
+struct TestQuicClient {
     signer: Keypair,
     connection: Connection,
     interval: Duration,
 }
 pub const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
-impl Producer {
+impl TestQuicClient {
     pub async fn create_and_connect(
         socket: SocketAddr,
         signer: Keypair,
@@ -38,13 +38,18 @@ impl Producer {
         }
     }
 
-    pub async fn send_transactions(&self) {
+    pub async fn send_dummy_txns(&self) {
         let wire_transactions =
             bincode::serialize(&dummy_memo_transaction(&self.signer, Default::default()))
                 .ok()
                 .unwrap();
+        self.create_and_send_data_over_stream(&wire_transactions)
+            .await;
+    }
+
+    pub async fn create_and_send_data_over_stream(&self, wire_transactions: &[u8]) {
         let mut send_stream = self.connection.open_uni().await.unwrap();
-        send_stream.write_all(&wire_transactions).await.unwrap()
+        send_stream.write_all(&wire_transactions).await.unwrap();
     }
 }
 
@@ -64,18 +69,20 @@ pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTra
         blockhash,
     )
     .unwrap();
-    solana_sdk::transaction::VersionedTransaction::try_new(
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
         VersionedMessage::V0(versioned_message),
         &[signer],
     )
-    .unwrap()
+    .unwrap();
+    println!("created dummy txns with signature {:?}", tx.signatures[0]);
+    tx
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_forwarder() {
     let (sender, receiver) = crossbeam_channel::unbounded();
     let keypair = Keypair::new();
     let exit = Arc::new(AtomicBool::new(false));
-    let forwarder = IrisQuicForwarder::create_new(
+    let server = IrisQuicServer::create_new(
         "iris-quic-forward-t",
         UdpSocket::bind("127.0.0.1:52104").unwrap(),
         sender,
@@ -86,20 +93,23 @@ async fn test_forwarder() {
     .unwrap();
     let signer = Keypair::read_from_file("/Users/nuel/.config/solana/id.json").unwrap();
     let hdl = std::thread::spawn(move || {
-        while let Ok(tx) = receiver.recv() {
-            println!("received a packet {:?}", tx);
+        while let Ok(packetb) = receiver.recv() {
+            // deserialize transaction and check if the signature matches the scent one
+            let tx: VersionedTransaction =
+                bincode::deserialize(&packet).unwrap();
+            println!("received signature: {:?}", tx.signatures[8])
         }
     });
-    let producer = Producer::create_and_connect(
+    let client = TestQuicClient::create_and_connect(
         SocketAddr::new("127.0.0.1".parse().unwrap(), 52105),
         signer,
         SocketAddr::new("127.0.0.1".parse().unwrap(), 52104),
         Duration::from_millis(400),
     )
     .await;
-    producer.send_transactions().await;
+    client.send_dummy_txns().await;
     tokio::time::sleep(Duration::from_secs(10)).await;
     exit.store(true, std::sync::atomic::Ordering::Relaxed);
-    forwarder.join().unwrap();
+    server.join().unwrap();
     hdl.join().unwrap();
 }
