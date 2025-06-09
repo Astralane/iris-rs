@@ -6,18 +6,19 @@ use quinn::{Connecting, Endpoint, TokioRuntime};
 use quinn_proto::EndpointConfig;
 use solana_perf::packet::{Meta, PacketBatch, PACKET_DATA_SIZE};
 use solana_quic_definitions::QUIC_CONNECTION_HANDSHAKE_TIMEOUT;
+use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use solana_sdk::signature::Keypair;
+use solana_streamer::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT;
 use solana_streamer::quic::QuicServerError;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{array, thread};
-use solana_sdk::net::DEFAULT_TPU_COALESCE;
-use solana_streamer::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 use tracing::log::debug;
-use tracing::{error, warn};
-
+use tracing::{error, info, warn};
 
 pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
 
@@ -87,8 +88,8 @@ pub(crate) fn spawn_server(
         Arc::new(TokioRuntime),
     )
     .map_err(QuicServerError::EndpointFailed)?;
-    println!("Quic Server Listening on {:?}", endpoint.local_addr());
-
+    let addr = endpoint.local_addr();
+    info!("listening on {:?}", addr.unwrap());
     let handle = tokio::spawn(run_server(
         endpoint,
         packet_sender,
@@ -109,16 +110,35 @@ async fn run_server(
     coalesce_channel_size: usize,
 ) {
     let (sender, receiver) = crossbeam_channel::bounded(coalesce_channel_size);
-
+    let cancel = CancellationToken::new();
     std::thread::spawn({
         let exit = exit.clone();
         move || {
             packet_batch_sender(packet_sender, receiver, exit, coalesce);
         }
     });
+    const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
+
+    std::thread::spawn({
+        let exit = exit.clone();
+        let cancel = cancel.clone();
+        move || loop {
+            if exit.load(Ordering::Relaxed) {
+                println!("exiting");
+                cancel.cancel();
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    });
 
     while !exit.load(Ordering::Relaxed) {
-        let incoming = endpoint.accept().await;
+        let incoming = select! {
+            incoming = endpoint.accept() => incoming,
+             _ = tokio::time::sleep(WAIT_FOR_CONNECTION_TIMEOUT) => {
+               None
+            }
+        };
         if let Some(incoming) = incoming {
             let connecting = incoming.accept();
             if let Ok(connecting) = connecting {
@@ -126,6 +146,7 @@ async fn run_server(
                     connecting,
                     sender.clone(),
                     wait_for_chunk_timeout,
+                    cancel.clone(),
                 ));
             }
         }
@@ -136,19 +157,24 @@ async fn handle_connection(
     connecting: Connecting,
     packet_sender: Sender<PacketAccumulator>,
     wait_for_chunk_timeout: Duration,
+    cancel: CancellationToken,
 ) {
     let res = tokio::time::timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await;
     if let Ok(connection_res) = res {
         match connection_res {
             Ok(connection) => {
-                //TODO: handle cancellation for this loop.
                 'outer: loop {
-                    let mut stream = match connection.accept_uni().await {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            error!("Error accepting stream: {:?}", e);
-                            break 'outer;
-                        }
+                    let mut stream = select! {
+                        conn = connection.accept_uni() => {
+                            match conn {
+                                Ok(stream) => stream,
+                                Err(e) => {
+                                    error!("Error accepting stream: {:?}", e);
+                                    break 'outer;
+                                }
+                            }
+                        },
+                        _ = cancel.cancelled() => break,
                     };
 
                     let mut accum = PacketAccumulator::new(Meta::default());

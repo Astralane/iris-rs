@@ -1,6 +1,7 @@
-use iris_quic_forwarder::quic_server::IrisQuicServer;
-use iris_quic_forwarder::vendor::quic_networking::configure_client_endpoint;
+use iris_quic_server::quic_server::IrisQuicServer;
+use iris_quic_server::vendor::quic_networking::configure_client_endpoint;
 use quinn::Connection;
+use solana_perf::packet::PACKET_DATA_SIZE;
 use solana_sdk::hash::Hash;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::message::v0::Message;
@@ -31,6 +32,7 @@ impl TestQuicClient {
         let endpoint = configure_client_endpoint(socket, Some(&signer)).unwrap();
         let connecting = endpoint.connect(dest_socket, "producer").unwrap();
         let connection = connecting.await.unwrap();
+        println!("Connected");
         Self {
             signer,
             connection,
@@ -56,11 +58,11 @@ impl TestQuicClient {
 pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTransaction {
     let compute_budget_ix =
         solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(23000);
-    let data = Keypair::new().pubkey();
+    let data = vec![1u8; 1024 - 5];
     let memo_instruction = Instruction {
         accounts: vec![AccountMeta::new(signer.pubkey(), true)],
         program_id: MEMO_PROGRAM,
-        data: data.to_string().as_bytes().to_vec(),
+        data,
     };
     let versioned_message = Message::try_compile(
         &signer.pubkey(),
@@ -74,11 +76,19 @@ pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTra
         &[signer],
     )
     .unwrap();
-    println!("created dummy txns with signature {:?}", tx.signatures[0]);
+    let hash = tx.verify_and_hash_message().unwrap();
+    let serialized = bincode::serialize(&tx).unwrap();
+    println!(
+        "created dummy txns with signature {:?}, hash: {:?}, size: {:?} max size: {:?}",
+        tx.signatures[0],
+        hash,
+        serialized.len(),
+        PACKET_DATA_SIZE
+    );
     tx
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn test_forwarder() {
+#[test]
+fn test_forwarder() {
     let (sender, receiver) = crossbeam_channel::unbounded();
     let keypair = Keypair::new();
     let exit = Arc::new(AtomicBool::new(false));
@@ -93,23 +103,35 @@ async fn test_forwarder() {
     .unwrap();
     let signer = Keypair::read_from_file("/Users/nuel/.config/solana/id.json").unwrap();
     let hdl = std::thread::spawn(move || {
-        while let Ok(packetb) = receiver.recv() {
+        while let Ok(batch) = receiver.recv() {
             // deserialize transaction and check if the signature matches the scent one
-            let tx: VersionedTransaction =
-                bincode::deserialize(&packet).unwrap();
-            println!("received signature: {:?}", tx.signatures[8])
+            let tx: Vec<VersionedTransaction> = batch
+                .iter()
+                .map(|packet| packet.deserialize_slice(..).unwrap())
+                .collect();
+            println!(
+                "received signature: {:?}, hash_result {:?}",
+                tx[0].signatures[0],
+                tx[0].verify_and_hash_message().unwrap()
+            )
         }
     });
-    let client = TestQuicClient::create_and_connect(
-        SocketAddr::new("127.0.0.1".parse().unwrap(), 52105),
-        signer,
-        SocketAddr::new("127.0.0.1".parse().unwrap(), 52104),
-        Duration::from_millis(400),
-    )
-    .await;
-    client.send_dummy_txns().await;
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    rt.block_on(async move {
+        let client = TestQuicClient::create_and_connect(
+            SocketAddr::new("127.0.0.1".parse().unwrap(), 52105),
+            signer,
+            SocketAddr::new("127.0.0.1".parse().unwrap(), 52104),
+            Duration::from_millis(400),
+        )
+        .await;
+        client.send_dummy_txns().await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    });
     exit.store(true, std::sync::atomic::Ordering::Relaxed);
+    println!("exit signalled");
     server.join().unwrap();
+    println!("server exited");
     hdl.join().unwrap();
 }

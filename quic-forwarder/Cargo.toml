@@ -5,7 +5,7 @@ edition.workspace = true
 
 [lib]
 crate-type = ["lib"]
-name = "iris_quic_forwarder"
+name = "iris_quic_server"
 
 [dependencies]
 solana-sdk = { workspace = true }
