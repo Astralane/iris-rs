@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use crate::otel_tracer::{get_subscriber_with_jaeger, init_subscriber};
+use crate::otel_tracer::{get_subscriber_with_otpl, init_subscriber};
 
 mod chain_state;
 mod rpc;
@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     info!("config: {:?}", config);
     
 
-    let subscriber = get_subscriber_with_jaeger(
+    let subscriber = get_subscriber_with_otpl(
         config.iris_name.clone(),
         config.rust_log.clone(),
         config.otpl_endpoint.clone(),

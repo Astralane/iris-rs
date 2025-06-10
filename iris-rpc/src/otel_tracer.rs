@@ -14,7 +14,7 @@ use tracing_subscriber::{fmt, EnvFilter, Layer, Registry};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-pub async fn get_subscriber_with_jaeger<Sink>(
+pub async fn get_subscriber_with_otpl<Sink>(
     name: String,
     env_filter: String,
     jaeger_endpoint: String,
