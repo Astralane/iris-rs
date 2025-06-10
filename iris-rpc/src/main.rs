@@ -33,7 +33,6 @@ mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
-mod quic_server;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -77,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
             .with_env_filter(EnvFilter::from_env("RUST_LOG"))
             .finish(),
     )
-        .expect("Failed to set up tracing");
+    .expect("Failed to set up tracing");
 
     //read config from env variables
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();

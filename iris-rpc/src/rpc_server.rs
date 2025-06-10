@@ -117,7 +117,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
         "Ok(1.3)".to_string()
     }
-    fn get_version(&self) -> RpcResult<RpcVersionInfo> {
+    async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
         let version = solana_version::Version::default();
         Ok(RpcVersionInfo {
             solana_core: version.to_string(),
