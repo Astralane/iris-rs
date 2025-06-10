@@ -25,6 +25,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use crate::otel_tracer::{get_subscriber_with_jaeger, init_subscriber};
 
 mod chain_state;
 mod rpc;
@@ -34,6 +35,7 @@ mod tpu_next_client;
 mod utils;
 mod vendor;
 mod quic_server;
+mod otel_tracer;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -57,6 +59,9 @@ pub struct Config {
     lookahead_slots: u64,
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
+    otpl_endpoint: String,
+    iris_name: String,
+    rust_log: String,
 }
 
 fn default_true() -> bool {
@@ -70,18 +75,19 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
-    env_logger::init();
-    //setup tracing
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_env("RUST_LOG"))
-            .finish(),
-    )
-        .expect("Failed to set up tracing");
-
-    //read config from env variables
-    let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
+    
+    let config: Config = Figment::new().merge(Env::raw()).extract()?;
     info!("config: {:?}", config);
+    
+
+    let subscriber = get_subscriber_with_jaeger(
+        config.iris_name.clone(),
+        config.rust_log.clone(),
+        config.otpl_endpoint.clone(),
+        std::io::stdout,
+    ).await;
+
+    init_subscriber(subscriber);
 
     let identity_keypair = config
         .identity_keypair_file
