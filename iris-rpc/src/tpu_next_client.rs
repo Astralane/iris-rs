@@ -10,7 +10,7 @@ use solana_tpu_client_next::ConnectionWorkersScheduler;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, span, Instrument, Level};
 
 pub struct TpuClientNextSender {
     runtime: Handle,
@@ -61,6 +61,7 @@ fn spawn_tpu_client_send_txs(
                     connect: leader_forward_count as usize,
                 },
             };
+
             let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
                 config,
                 leader_info,
