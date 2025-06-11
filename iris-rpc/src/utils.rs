@@ -13,14 +13,6 @@ pub trait ChainStateClient: Send + Sync {
     fn get_slot(&self) -> u64;
     fn confirm_signature_status(&self, signature: &str) -> Option<u64>;
 }
-pub trait CreateClient: SendTransactionClient {
-    fn create_client(
-        maybe_runtime: Handle,
-        leader_updater: Box<dyn LeaderUpdater>,
-        leader_forward_count: u64,
-        validator_identity: Keypair,
-    ) -> Self;
-}
 
 pub fn generate_random_string(len: usize) -> String {
     rand::thread_rng()

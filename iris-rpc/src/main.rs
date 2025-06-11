@@ -5,7 +5,7 @@ use crate::otel_tracer::{get_subscriber_with_otpl, init_subscriber};
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
-use crate::utils::{ChainStateClient, CreateClient, SendTransactionClient};
+use crate::utils::{ChainStateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -24,6 +24,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -97,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
+    let cancel = CancellationToken::new();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
@@ -110,8 +112,9 @@ async fn main() -> anyhow::Result<()> {
     let tx_client: Arc<dyn SendTransactionClient> = Arc::new(TpuClientNextSender::create_client(
         Handle::current(),
         leader_updater,
-        config.lookahead_slots,
+        config.lookahead_slots as usize,
         identity_keypair,
+        cancel,
     ));
 
     let ws_client = PubsubClient::new(&config.ws_url)

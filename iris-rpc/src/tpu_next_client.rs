@@ -1,79 +1,65 @@
-use crate::utils::{CreateClient, SendTransactionClient};
+use crate::utils::SendTransactionClient;
 use metrics::counter;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
-    ConnectionWorkersSchedulerConfig, Fanout,
+    BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
 };
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::runtime::Handle;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, span, Instrument, Level};
 
 pub struct TpuClientNextSender {
     runtime: Handle,
+    update_certificate_sender: tokio::sync::watch::Sender<Option<StakeIdentity>>,
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
     cancel: CancellationToken,
 }
 
-impl CreateClient for TpuClientNextSender {
-    fn create_client(
-        runtime: Handle,
-        leader_info: Box<dyn LeaderUpdater>,
-        leader_forward_count: u64,
+pub const MAX_CONNECTIONS: usize = 60;
+
+impl TpuClientNextSender {
+    pub(crate) fn create_client(
+        runtime_handle: Handle,
+        leader_updater: Box<dyn LeaderUpdater>,
+        leader_forward_count: usize,
         validator_identity: Keypair,
+        cancel: CancellationToken,
     ) -> Self {
-        spawn_tpu_client_send_txs(
-            runtime,
-            leader_info,
-            leader_forward_count,
-            validator_identity,
-        )
-    }
-}
-
-fn spawn_tpu_client_send_txs(
-    runtime_handle: Handle,
-    leader_info: Box<dyn LeaderUpdater>,
-    leader_forward_count: u64,
-    validator_identity: Keypair,
-) -> TpuClientNextSender {
-    let (sender, receiver) = tokio::sync::mpsc::channel(128);
-    let cancel = CancellationToken::new();
-    let _handle = runtime_handle.spawn({
-        let cancel = cancel.clone();
-        async move {
-            let config = ConnectionWorkersSchedulerConfig {
-                bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-                stake_identity: Some(validator_identity),
-                // Cache size of 128 covers all nodes above the P90 slot count threshold,
-                // which together account for ~75% of total slots in the epoch.
-                num_connections: 128,
-                skip_check_transaction_age: true,
-                worker_channel_size: 2,
-                max_reconnect_attempts: 4,
-                // Send to the next leader only, but verify that connections exist
-                // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
-                leaders_fanout: Fanout {
-                    send: leader_forward_count as usize,
-                    connect: leader_forward_count as usize,
-                },
-            };
-
-            let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
-                config,
-                leader_info,
-                receiver,
-                cancel.clone(),
-            ));
+        let (sender, receiver) = tokio::sync::mpsc::channel(128);
+        let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+        let udp_sock =
+            std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
+        let config = ConnectionWorkersSchedulerConfig {
+            bind: BindTarget::Socket(udp_sock),
+            stake_identity: Some(StakeIdentity::new(&validator_identity)),
+            num_connections: MAX_CONNECTIONS,
+            skip_check_transaction_age: true,
+            // experimentally found parameter values
+            worker_channel_size: 64,
+            max_reconnect_attempts: 4,
+            leaders_fanout: Fanout {
+                connect: leader_forward_count,
+                send: leader_forward_count,
+            },
+        };
+        let scheduler = ConnectionWorkersScheduler::new(
+            leader_updater,
+            receiver,
+            update_certificate_receiver,
+            cancel.clone(),
+        );
+        let _handle = runtime_handle.spawn(scheduler.run(config));
+        TpuClientNextSender {
+            runtime: runtime_handle,
+            update_certificate_sender,
+            sender,
+            cancel,
         }
-    });
-    TpuClientNextSender {
-        runtime: runtime_handle,
-        sender,
-        cancel,
     }
 }
 
