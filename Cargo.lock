@@ -3782,19 +3782,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
 
 [[package]]
-name = "rpc-aggregator"
-version = "0.0.1"
-dependencies = [
- "crossbeam-channel",
- "metrics",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"

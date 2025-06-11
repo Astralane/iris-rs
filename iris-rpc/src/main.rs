@@ -59,6 +59,7 @@ pub struct Config {
     //allowing connections to be established with those leaders in advance.
     lookahead_slots: u64,
     prometheus_addr: SocketAddr,
+    metrics_update_interval_secs: u64,
     retry_interval_seconds: u32,
     otpl_endpoint: String,
     rust_log: String,
@@ -114,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
         leader_updater,
         config.lookahead_slots as usize,
         identity_keypair,
+        config.metrics_update_interval_secs,
         cancel,
     ));
 

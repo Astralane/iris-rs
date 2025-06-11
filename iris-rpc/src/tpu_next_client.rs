@@ -1,15 +1,19 @@
 use crate::utils::SendTransactionClient;
-use metrics::counter;
+use metrics::{counter, gauge};
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
 };
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
-use solana_tpu_client_next::ConnectionWorkersScheduler;
+use solana_tpu_client_next::{ConnectionWorkersScheduler, SendTransactionStats};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
+
 use tokio_util::sync::CancellationToken;
 use tracing::{error, span, Instrument, Level};
 
@@ -28,6 +32,7 @@ impl TpuClientNextSender {
         leader_updater: Box<dyn LeaderUpdater>,
         leader_forward_count: usize,
         validator_identity: Keypair,
+        metrics_update_interval_secs: u64,
         cancel: CancellationToken,
     ) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(128);
@@ -53,6 +58,10 @@ impl TpuClientNextSender {
             update_certificate_receiver,
             cancel.clone(),
         );
+        let _metric_hdl = runtime_handle.spawn(send_metrics_stats(
+            scheduler.get_stats().clone(),
+            metrics_update_interval_secs,
+        ));
         let _handle = runtime_handle.spawn(scheduler.run(config));
         TpuClientNextSender {
             runtime: runtime_handle,
@@ -78,5 +87,43 @@ impl SendTransactionClient for TpuClientNextSender {
             );
             counter!("iris_tx_send_to_tpu_client_next_error").increment(1);
         }
+    }
+}
+
+pub async fn send_metrics_stats(
+    stats: Arc<SendTransactionStats>,
+    metrics_update_interval_secs: u64,
+) {
+    loop {
+        gauge!("successfully_sent").set(stats.successfully_sent.load(Relaxed) as f64);
+        gauge!("connect_error_cids_exhausted")
+            .set(stats.connect_error_cids_exhausted.load(Relaxed) as f64);
+        gauge!("connect_error_invalid_remote_address")
+            .set(stats.connect_error_invalid_remote_address.load(Relaxed) as f64);
+        gauge!("connect_error_other").set(stats.connect_error_other.load(Relaxed) as f64);
+        gauge!("connection_error_application_closed")
+            .set(stats.connection_error_application_closed.load(Relaxed) as f64);
+        gauge!("connection_error_cids_exhausted")
+            .set(stats.connection_error_cids_exhausted.load(Relaxed) as f64);
+        gauge!("connection_error_connection_closed")
+            .set(stats.connection_error_connection_closed.load(Relaxed) as f64);
+        gauge!("connection_error_locally_closed")
+            .set(stats.connection_error_locally_closed.load(Relaxed) as f64);
+        gauge!("connection_error_reset").set(stats.connection_error_reset.load(Relaxed) as f64);
+        gauge!("connection_error_timed_out")
+            .set(stats.connection_error_timed_out.load(Relaxed) as f64);
+        gauge!("connection_error_transport_error")
+            .set(stats.connection_error_transport_error.load(Relaxed) as f64);
+        gauge!("connection_error_version_mismatch")
+            .set(stats.connection_error_version_mismatch.load(Relaxed) as f64);
+        gauge!("write_error_closed_stream")
+            .set(stats.write_error_closed_stream.load(Relaxed) as f64);
+        gauge!("write_error_connection_lost")
+            .set(stats.write_error_connection_lost.load(Relaxed) as f64);
+        gauge!("write_error_stopped").set(stats.write_error_stopped.load(Relaxed) as f64);
+        gauge!("write_error_zero_rtt_rejected")
+            .set(stats.write_error_zero_rtt_rejected.load(Relaxed) as f64);
+
+        tokio::time::sleep(Duration::from_secs(metrics_update_interval_secs)).await;
     }
 }

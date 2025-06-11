@@ -99,10 +99,13 @@ impl IrisRpcServerImpl {
                     store.remove_transaction(signature);
                 }
 
-                info!(
-                    "retrying {} transactions",
-                    transactions_to_send.iter().len()
-                );
+                if transactions_to_send.iter().len() != 0 {
+                    info!(
+                        "retrying {} transactions",
+                        transactions_to_send.iter().len()
+                    );
+                }
+
                 for batches in transactions_to_send.chunks(10) {
                     txn_sender.send_transaction_batch(batches.to_vec());
                 }
