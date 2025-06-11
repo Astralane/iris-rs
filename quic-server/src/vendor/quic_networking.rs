@@ -3,11 +3,11 @@ use quinn::Endpoint;
 use quinn_proto::crypto::rustls::QuicClientConfig;
 use quinn_proto::{ClientConfig, IdleTimeout, TransportConfig};
 use solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS};
+use solana_sdk::signature::Keypair;
 use solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID;
 use solana_tls_utils::{tls_client_config_builder, QuicClientCertificate};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use solana_sdk::signature::Keypair;
 
 pub fn configure_client_endpoint(
     bind: SocketAddr,
