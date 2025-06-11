@@ -61,7 +61,7 @@ fn spawn_tpu_client_send_txs(
                     connect: leader_forward_count as usize,
                 },
             };
-            
+
             let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
                 config,
                 leader_info,

@@ -1,6 +1,7 @@
 #![warn(unused_crate_dependencies)]
 
 use crate::chain_state::ChainStateWsClient;
+use crate::otel_tracer::{get_subscriber_with_otpl, init_subscriber};
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
@@ -25,17 +26,16 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use crate::otel_tracer::{get_subscriber_with_otpl, init_subscriber};
 
 mod chain_state;
+mod otel_tracer;
+mod quic_server;
 mod rpc;
 mod rpc_server;
 mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
-mod quic_server;
-mod otel_tracer;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -60,7 +60,6 @@ pub struct Config {
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
     otpl_endpoint: String,
-    iris_name: String,
     rust_log: String,
 }
 
@@ -75,17 +74,16 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
-    
+
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
     info!("config: {:?}", config);
-    
 
     let subscriber = get_subscriber_with_otpl(
-        config.iris_name.clone(),
         config.rust_log.clone(),
         config.otpl_endpoint.clone(),
         std::io::stdout,
-    ).await;
+    )
+    .await;
 
     init_subscriber(subscriber);
 
