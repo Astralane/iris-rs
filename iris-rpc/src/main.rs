@@ -6,7 +6,7 @@ use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
 use crate::utils::{ChainStateClient, SendTransactionClient};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::ServerBuilder;
@@ -17,13 +17,15 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::leader_updater::create_leader_updater;
+use solana_tpu_client_next::workers_cache::shutdown_worker;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
+use tokio::runtime::{Handle, Runtime};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -46,6 +48,7 @@ pub struct Config {
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
     max_retries: u32,
+    num_threads: Option<usize>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
     //Whether to skip checking the transaction blockhash expiration.
@@ -61,32 +64,49 @@ pub struct Config {
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
     otpl_endpoint: String,
-    rust_log: String,
 }
 
 fn default_true() -> bool {
     true
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
     CryptoProvider::install_default(rustls::crypto::ring::default_provider())
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
-
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
-    info!("config: {:?}", config);
 
-    let subscriber = get_subscriber_with_otpl(
-        config.rust_log.clone(),
-        config.otpl_endpoint.clone(),
-        std::io::stdout,
-    )
-    .await;
-
+    let num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(config.num_threads.unwrap_or(num_cores))
+        .thread_name("iris-rpc-worker")
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?;
+    //listen for
+    runtime.block_on(run_async(config))?;
+    Ok(())
+}
+async fn run_async(config: Config) -> anyhow::Result<()> {
+    let subscriber = get_subscriber_with_otpl(config.otpl_endpoint.clone(), std::io::stdout).await;
     init_subscriber(subscriber);
+
+    info!("config: {:?}", config);
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install CTRL+C signal handler");
+            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+
+    let cancel = CancellationToken::new();
 
     let identity_keypair = config
         .identity_keypair_file
@@ -98,10 +118,9 @@ async fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
-    let cancel = CancellationToken::new();
 
-    let shutdown = Arc::new(AtomicBool::new(false));
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
+
     info!("creating leader updater...");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
         .await
@@ -114,12 +133,12 @@ async fn main() -> anyhow::Result<()> {
         leader_updater,
         config.lookahead_slots as usize,
         identity_keypair,
-        cancel,
+        cancel.clone(),
     ));
 
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
-        .expect("Failed to connect to websocket");
+        .context("Failed to connect to websocket")?;
 
     let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
         Handle::current(),
@@ -144,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
         .build(config.address)
         .await?;
 
+
     info!("server starting in {:?}", config.address);
     let server_hdl = rpc_server.start(iris_rpc.into_rpc());
     //exit when shutdown is triggered
@@ -151,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     server_hdl.stop()?;
+    cancel.cancel();
     server_hdl.stopped().await;
-    process::exit(1);
+    Ok(())
 }

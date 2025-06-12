@@ -14,8 +14,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer, Registry};
 
 pub async fn get_subscriber_with_otpl<Sink>(
-    env_filter: String,
-    jaeger_endpoint: String,
+    endpoint: String,
     sink: Sink,
 ) -> impl Subscriber + Send + Sync
 where
@@ -25,13 +24,13 @@ where
         "iris_{}",
         get_server_public_ip()
             .await
-            .unwrap_or(String::from("CANT_GET_IP"))
+            .unwrap_or(String::from("unknown_instance"))
     );
     let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_batch_exporter(
             opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
-                .with_endpoint(jaeger_endpoint.clone())
+                .with_endpoint(endpoint.clone())
                 .build()
                 .expect("Couldn't create OTLP tracer"),
         )
@@ -52,7 +51,7 @@ where
         .with_batch_exporter(
             LogExporter::builder()
                 .with_tonic()
-                .with_endpoint(jaeger_endpoint)
+                .with_endpoint(endpoint)
                 .build()
                 .expect("Couldn't create OTL tracer"),
         )
@@ -61,7 +60,7 @@ where
 
     let logging_layer = OpenTelemetryTracingBridge::new(&log_tracer);
 
-    let env_filter = EnvFilter::new(env_filter);
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
     let format_layer = fmt::Layer::default().with_writer(sink);
 
     Registry::default()
