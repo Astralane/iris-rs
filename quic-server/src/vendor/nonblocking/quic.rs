@@ -1,10 +1,13 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use smallvec::SmallVec;
-use solana_perf::packet::{Meta, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH};
+use solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use solana_perf::sigverify::PacketError;
+use solana_sdk::short_vec::decode_shortu16_len;
+use solana_sdk::signature::SIGNATURE_BYTES;
 use tracing::trace;
 
 // A struct to accumulate the bytes making up
@@ -38,11 +41,11 @@ pub fn packet_batch_sender(
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
-    let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
+    let mut total_bytes: usize = 0;
+
     loop {
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
 
         loop {
             if exit.load(Ordering::Relaxed) {
@@ -54,7 +57,7 @@ pub fn packet_batch_sender(
             {
                 let len = packet_batch.len();
 
-                if let Err(e) = packet_sender.try_send(packet_batch) {
+                if let Err(e) = packet_sender.try_send(packet_batch.into()) {
                     trace!("Send error: {}", e);
 
                     // The downstream channel is disconnected, this error is not recoverable.
@@ -84,26 +87,60 @@ pub fn packet_batch_sender(
                     .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
             };
 
-            if let Ok(packet_accumulator) = timeout_res {
+            if let Ok(mut packet_accumulator) = timeout_res {
                 // Start the timeout from when the packet batch first becomes non-empty
                 if packet_batch.is_empty() {
                     batch_start_time = Instant::now();
                 }
 
-                unsafe {
-                    let new_len = packet_batch.len() + 1;
-                    packet_batch.set_len(new_len);
-                }
+                // 86% of transactions/packets come in one chunk. In that case,
+                // we can just move the chunk to the `Packet` and no copy is
+                // made.
+                // 14% of them come in multiple chunks. In that case, we copy
+                // them into one `Bytes` buffer. We make a copy once, with
+                // intention to not do it again.
+                let num_chunks = packet_accumulator.chunks.len();
+                let mut packet = if packet_accumulator.chunks.len() == 1 {
+                    BytesPacket::new(
+                        packet_accumulator.chunks.pop().expect("expected one chunk"),
+                        packet_accumulator.meta,
+                    )
+                } else {
+                    let size: usize = packet_accumulator.chunks.iter().map(Bytes::len).sum();
+                    let mut buf = BytesMut::with_capacity(size);
+                    for chunk in packet_accumulator.chunks {
+                        buf.put_slice(&chunk);
+                    }
+                    BytesPacket::new(buf.freeze(), packet_accumulator.meta)
+                };
 
-                let i = packet_batch.len() - 1;
-                *packet_batch[i].meta_mut() = packet_accumulator.meta;
-                let mut offset = 0;
-                for chunk in packet_accumulator.chunks {
-                    packet_batch[i].buffer_mut()[offset..offset + chunk.len()]
-                        .copy_from_slice(&chunk);
-                    offset += chunk.len();
-                }
+                total_bytes += packet.meta().size;
+                packet_batch.push(packet);
             }
         }
     }
+}
+
+/// Get the signature of the transaction packet
+/// This does a rudimentry verification to make sure the packet at least
+/// contains the signature data and it returns the reference to the signature.
+pub fn get_signature_from_packet(
+    packet: &BytesPacket,
+) -> Result<&[u8; SIGNATURE_BYTES], PacketError> {
+    let (sig_len_untrusted, sig_start) = packet
+        .data(..)
+        .and_then(|bytes| decode_shortu16_len(bytes).ok())
+        .ok_or(PacketError::InvalidShortVec)?;
+
+    if sig_len_untrusted < 1 {
+        return Err(PacketError::InvalidSignatureLen);
+    }
+
+    let signature = packet
+        .data(sig_start..sig_start.saturating_add(SIGNATURE_BYTES))
+        .ok_or(PacketError::InvalidSignatureLen)?;
+    let signature = signature
+        .try_into()
+        .map_err(|_| PacketError::InvalidSignatureLen)?;
+    Ok(signature)
 }

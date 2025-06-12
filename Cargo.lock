@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "iris-quic-server"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2169,6 +2169,7 @@ dependencies = [
  "dotenv",
  "figment",
  "futures-util",
+ "iris-quic-server",
  "jsonrpsee",
  "log",
  "metrics",
@@ -3694,19 +3695,6 @@ name = "route-recognizer"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
-
-[[package]]
-name = "rpc-aggregator"
-version = "0.0.1"
-dependencies = [
- "crossbeam-channel",
- "metrics",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "tracing",
- "url",
-]
 
 [[package]]
 name = "rustc-demangle"

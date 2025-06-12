@@ -163,7 +163,6 @@ async fn run_async(config: Config) -> anyhow::Result<()> {
         .build(config.address)
         .await?;
 
-
     info!("server starting in {:?}", config.address);
     let server_hdl = rpc_server.start(iris_rpc.into_rpc());
     //exit when shutdown is triggered
