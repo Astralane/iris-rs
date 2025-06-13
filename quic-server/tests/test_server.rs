@@ -14,6 +14,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 struct TestQuicClient {
     signer: Keypair,
@@ -91,13 +92,13 @@ pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTra
 fn test_forwarder() {
     let (sender, receiver) = crossbeam_channel::unbounded();
     let keypair = Keypair::new();
-    let exit = Arc::new(AtomicBool::new(false));
-    let server = IrisQuicServer::create_new(
+    let cancel = CancellationToken::new();
+    let server = IrisQuicServer::spawn_new(
         "iris-quic-forward-t",
         UdpSocket::bind("127.0.0.1:52104").unwrap(),
         sender,
         keypair,
-        exit.clone(),
+        cancel.clone(),
         4,
     )
     .unwrap();
@@ -129,7 +130,7 @@ fn test_forwarder() {
         client.send_dummy_txns().await;
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     });
-    exit.store(true, std::sync::atomic::Ordering::Relaxed);
+    cancel.cancel();
     println!("exit signalled");
     server.join().unwrap();
     println!("server exited");

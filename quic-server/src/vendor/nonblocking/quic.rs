@@ -2,12 +2,13 @@ use bytes::{BufMut, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use smallvec::SmallVec;
 use solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PacketBatch, PACKETS_PER_BATCH};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use solana_perf::sigverify::PacketError;
 use solana_sdk::short_vec::decode_shortu16_len;
 use solana_sdk::signature::SIGNATURE_BYTES;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 use tracing::trace;
 
 // A struct to accumulate the bytes making up
@@ -37,7 +38,7 @@ impl PacketAccumulator {
 pub fn packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
-    exit: Arc<AtomicBool>,
+    cancel: CancellationToken,
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
@@ -48,7 +49,7 @@ pub fn packet_batch_sender(
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
 
         loop {
-            if exit.load(Ordering::Relaxed) {
+            if cancel.is_cancelled() {
                 return;
             }
             let elapsed = batch_start_time.elapsed();
@@ -62,7 +63,7 @@ pub fn packet_batch_sender(
 
                     // The downstream channel is disconnected, this error is not recoverable.
                     if matches!(e, TrySendError::Disconnected(_)) {
-                        exit.store(true, Ordering::Relaxed);
+                        cancel.cancel();
                         return;
                     }
                 } else {

@@ -16,6 +16,7 @@ yellowstone-grpc-proto = { workspace = true }
 
 iris-quic-server = { workspace = true }
 futures = { workspace = true }
+crossbeam-channel = { workspace = true }
 jsonrpsee = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

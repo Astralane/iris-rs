@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::fmt::Debug;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use tracing::info;
 
 mod chain_state;
 mod otel_tracer;
-mod quic_server;
+mod quic_forwarder;
 mod rpc;
 mod rpc_server;
 mod store;
@@ -33,6 +33,8 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
+    quic_bind_address: SocketAddr,
+    quic_server_threads: Option<usize>,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
     max_retries: u32,
@@ -94,14 +96,24 @@ fn main() -> anyhow::Result<()> {
         rpc.clone(),
         config.ws_url,
         config.leader_forward_count as usize,
-        identity_keypair,
+        &identity_keypair,
         cancel.clone(),
+    );
+
+    let tx_client = Arc::new(tx_client);
+
+    let quic_handle = quic_forwarder::QuicTxForwarder::spawn_new(
+        UdpSocket::bind(config.quic_bind_address)?,
+        tx_client.clone(),
+        &identity_keypair,
+        cancel.clone(),
+        config.quic_server_threads.unwrap_or(4usize),
     );
 
     let rpc_handle = rpc_server::spawn_jsonrpc_server(
         config.address,
         config.rpc_num_threads.unwrap_or(4usize),
-        Arc::new(tx_client),
+        tx_client,
         txn_store,
         Arc::new(chain_state),
         Duration::from_secs(config.retry_interval_seconds as u64),
@@ -112,5 +124,6 @@ fn main() -> anyhow::Result<()> {
     rpc_handle.join().unwrap();
     tpu_next_handle.join().unwrap();
     chain_state_hdl.join().unwrap();
+    quic_handle.join().unwrap();
     Ok(())
 }

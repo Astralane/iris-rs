@@ -27,7 +27,7 @@ impl TpuClientNextSender {
         rpc: Arc<RpcClient>,
         ws_url: String,
         leader_forward_count: usize,
-        validator_identity: Keypair,
+        validator_identity: &Keypair,
         cancel: CancellationToken,
     ) -> (Self, std::thread::JoinHandle<()>) {
         let (sender, receiver) = tokio::sync::mpsc::channel(128);
@@ -36,7 +36,7 @@ impl TpuClientNextSender {
             std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
         let config = ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Socket(udp_sock),
-            stake_identity: Some(StakeIdentity::new(&validator_identity)),
+            stake_identity: Some(StakeIdentity::new(validator_identity)),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values

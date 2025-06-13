@@ -27,12 +27,12 @@ pub struct IrisQuicServer {
 }
 
 impl IrisQuicServer {
-    pub fn create_new(
+    pub fn spawn_new(
         thread_name: &str,
         tpu_socket: UdpSocket,
         tpu_sender: Sender<PacketBatch>,
-        identity_keypair: Keypair,
-        exit: Arc<AtomicBool>,
+        identity_keypair: &Keypair,
+        exit: CancellationToken,
         num_threads: usize,
     ) -> Result<Self, QuicServerError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -73,14 +73,14 @@ impl IrisQuicServer {
 
 pub(crate) fn spawn_server(
     tpu_socket: UdpSocket,
-    keypair: Keypair,
+    keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
+    exit: CancellationToken,
     wait_for_chunk_timeout: Duration,
     qcoalesce: Duration,
     coalesce_channel_size: usize,
 ) -> Result<tokio::task::JoinHandle<()>, QuicServerError> {
-    let (config, _) = configure_server(&keypair)?;
+    let (config, _) = configure_server(keypair)?;
     let endpoint = Endpoint::new(
         EndpointConfig::default(),
         Some(config.clone()),
@@ -104,40 +104,27 @@ pub(crate) fn spawn_server(
 async fn run_server(
     endpoint: Endpoint,
     packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
+    cancel: CancellationToken,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
     coalesce_channel_size: usize,
 ) {
     let (sender, receiver) = crossbeam_channel::bounded(coalesce_channel_size);
-    let cancel = CancellationToken::new();
     std::thread::spawn({
-        let exit = exit.clone();
+        let cancel = cancel.clone();
         move || {
-            packet_batch_sender(packet_sender, receiver, exit, coalesce);
+            packet_batch_sender(packet_sender, receiver, cancel, coalesce);
         }
     });
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
 
-    std::thread::spawn({
-        let exit = exit.clone();
-        let cancel = cancel.clone();
-        move || loop {
-            if exit.load(Ordering::Relaxed) {
-                println!("exiting");
-                cancel.cancel();
-                break;
-            }
-            thread::sleep(Duration::from_millis(500));
-        }
-    });
-
-    while !exit.load(Ordering::Relaxed) {
+    loop {
         let incoming = select! {
             incoming = endpoint.accept() => incoming,
              _ = tokio::time::sleep(WAIT_FOR_CONNECTION_TIMEOUT) => {
                None
             }
+            _ = cancel.cancelled() => break,
         };
         if let Some(incoming) = incoming {
             let connecting = incoming.accept();
