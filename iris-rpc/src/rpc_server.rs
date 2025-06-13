@@ -3,6 +3,7 @@ use crate::store::{TransactionData, TransactionStore};
 use crate::utils::{ChainStateClient, SendTransactionClient};
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
+use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
@@ -11,10 +12,11 @@ use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_rpc_client_api::response::RpcVersionInfo;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
-use std::sync::atomic::AtomicBool;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info};
 
 pub struct IrisRpcServerImpl {
     txn_sender: Arc<dyn SendTransactionClient>,
@@ -32,13 +34,58 @@ pub fn invalid_request(reason: &str) -> ErrorObjectOwned {
     )
 }
 
+pub fn spawn_jsonrpc_server(
+    address: SocketAddr,
+    num_threads: usize,
+    txn_sender: Arc<dyn SendTransactionClient>,
+    store: Arc<dyn TransactionStore>,
+    chain_state: Arc<dyn ChainStateClient>,
+    retry_interval: Duration,
+    cancel: CancellationToken,
+    max_retries: u32,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("jsonrpc-server-t".to_string())
+        .spawn(move || {
+            let iris_rpc = IrisRpcServerImpl::new(
+                txn_sender,
+                store,
+                chain_state,
+                Duration::from_secs(retry_interval.as_secs()),
+                cancel.clone(),
+                max_retries,
+            );
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("jsonrpc-server-rt".to_string())
+                .worker_threads(num_threads)
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                let rpc_server = ServerBuilder::default()
+                    .max_connections(1_000)
+                    .set_tcp_no_delay(true)
+                    .build(address)
+                    .await
+                    .unwrap();
+                let server_handle = rpc_server.start(iris_rpc.into_rpc());
+                while !cancel.is_cancelled() {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                let _ = server_handle.stop();
+                server_handle.stopped().await;
+                info!("jsonrpc server stopped");
+            });
+        })
+        .unwrap()
+}
 impl IrisRpcServerImpl {
     pub fn new(
         txn_sender: Arc<dyn SendTransactionClient>,
         store: Arc<dyn TransactionStore>,
         chain_state: Arc<dyn ChainStateClient>,
         retry_interval: Duration,
-        shutdown: Arc<AtomicBool>,
+        cancel: CancellationToken,
         max_retries: u32,
     ) -> Self {
         let client = IrisRpcServerImpl {
@@ -48,22 +95,27 @@ impl IrisRpcServerImpl {
             retry_interval,
             max_retries,
         };
-        client.spawn_retry_transactions_loop(shutdown);
+        client.spawn_retry_transactions_loop(cancel);
         client
     }
 
-    fn spawn_retry_transactions_loop(&self, shutdown: Arc<AtomicBool>) {
+    fn spawn_retry_transactions_loop(&self, cancel: CancellationToken) {
         let store = self.store.clone();
         let chain_state = self.chain_state.clone();
         let txn_sender = self.txn_sender.clone();
         let retry_interval = self.retry_interval;
+        let mut ticker = tokio::time::interval(retry_interval);
 
         tokio::spawn(async move {
             loop {
-                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        break;
+                    },
+                    _ = ticker.tick() => {
+                        debug!("ticking retries loop");
+                    }
                 }
-
                 let transactions_map = store.get_transactions();
                 let mut transactions_to_remove = vec![];
                 let mut transactions_to_send = vec![];
@@ -80,8 +132,8 @@ impl IrisRpcServerImpl {
                             .record(slot.saturating_sub(txn.slot) as f64);
                         transactions_to_remove.push(txn.key().clone());
                     }
-                    //check if transaction has been in the store for too long
-                    if txn.value().sent_at.elapsed() > Duration::from_secs(60) {
+                    //check if the transaction has been in the store for too long
+                    if txn.value().sent_at.elapsed() > Duration::from_secs(30) {
                         transactions_to_remove.push(txn.key().clone());
                     }
                     //check if max retries has been reached
@@ -106,8 +158,6 @@ impl IrisRpcServerImpl {
                 for batches in transactions_to_send.chunks(10) {
                     txn_sender.send_transaction_batch(batches.to_vec());
                 }
-
-                tokio::time::sleep(retry_interval).await;
             }
         });
     }

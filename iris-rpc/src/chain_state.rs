@@ -1,4 +1,5 @@
 use crate::utils::{generate_random_string, ChainStateClient};
+use anyhow::Context;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use log::error;
@@ -11,20 +12,18 @@ use solana_sdk::signature::Signature;
 use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
+use tokio::runtime;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBlocks};
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
-
-const RETRY_INTERVAL: u64 = 1000;
-const MAX_RETRIES: usize = 5;
 
 macro_rules! ping_request {
     () => {
@@ -60,50 +59,61 @@ pub struct ChainStateWsClient {
     slot: Arc<AtomicU64>,
     // signature -> (block_time, slot)
     signature_store: Arc<SignatureStore>,
-    thread_hdls: Vec<JoinHandle<()>>,
 }
 
 impl ChainStateWsClient {
-    pub fn new(
-        runtime: Handle,
-        shutdown: Arc<AtomicBool>,
+    pub fn spawn_new(
+        cancel: CancellationToken,
         retain_slot_count: u64,
-        ws_client: Arc<PubsubClient>,
+        ws_url: String,
         grpc_url: Option<String>,
-    ) -> Self {
+    ) -> (Self, std::thread::JoinHandle<()>) {
         let current_slot = Arc::new(AtomicU64::new(0));
         let signature_store = Arc::new(DashMap::new());
-        let mut hdl = Vec::new();
+
         let block_listener_hdl = if let Some(grpc_url) = grpc_url {
             spawn_grpc_block_listener(
-                runtime.clone(),
-                shutdown.clone(),
+                cancel.clone(),
                 signature_store.clone(),
                 retain_slot_count,
                 grpc_url,
             )
         } else {
             spawn_ws_block_listener(
-                runtime.clone(),
-                shutdown.clone(),
+                cancel.clone(),
                 signature_store.clone(),
                 retain_slot_count,
-                ws_client.clone(),
+                ws_url.clone(),
             )
         };
-        hdl.push(block_listener_hdl);
-        hdl.push(spawn_ws_slot_listener(
-            runtime.clone(),
-            shutdown,
-            current_slot.clone(),
-            ws_client,
-        ));
 
-        Self {
+        let slot_listener_hdl =
+            spawn_ws_slot_listener(cancel.clone(), current_slot.clone(), ws_url);
+
+        let handle = std::thread::Builder::new()
+            .name("chain-updater-t".to_string())
+            .spawn(move || {
+                let rt = runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let res = rt.block_on(futures::future::try_join(
+                    block_listener_hdl,
+                    slot_listener_hdl,
+                ));
+                if let Err(err) = res {
+                    error!("unexpected error in chain-updater-t: {:?}", err);
+                    cancel.cancel()
+                }
+            })
+            .unwrap();
+
+        let this = Self {
             slot: current_slot,
             signature_store,
-            thread_hdls: hdl,
-        }
+        };
+
+        (this, handle)
     }
 }
 
@@ -117,13 +127,15 @@ impl ChainStateClient for ChainStateWsClient {
     }
 }
 fn spawn_ws_block_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
+    cancel: CancellationToken,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
-    ws_client: Arc<PubsubClient>,
-) -> JoinHandle<()> {
-    runtime.spawn(async move {
+    ws_url: String,
+) -> JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        let ws_client = PubsubClient::new(&ws_url)
+            .await
+            .context("error creating ws_client")?;
         let config = Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig::confirmed()),
             encoding: Some(Base64),
@@ -132,60 +144,63 @@ fn spawn_ws_block_listener(
             max_supported_transaction_version: Some(0),
         });
         info!("Subscribing to ws block updates");
-        match ws_client
+        let subscription = ws_client
             .block_subscribe(RpcBlockSubscribeFilter::All, config)
-            .await
-        {
-            Ok((mut stream, unsub)) => {
-                while let Some(block) = stream.next().await {
-                    debug!("Block update");
-                    gauge!("iris_current_block").set(block.value.slot as f64);
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let block_update = block.value;
-                    if let Some(block) = block_update.block {
-                        let slot = block_update.slot;
-                        let _block_time = block.block_time;
-                        debug!("Block update: {:?}", slot);
-                        if let Some(signatures) = block.signatures {
-                            for signature in signatures {
-                                signature_store.insert(signature, slot);
-                            }
-                        }
-                        // remove old signatures to prevent leak of memory < slot - retain_slot_count
-                        signature_store.retain(|_, v| *v > slot - retain_slot_count);
-                        gauge!("iris_signature_store_size").set(signature_store.len() as f64);
+            .await?;
+        let (mut stream, unsub) = subscription;
+        loop {
+            let block = tokio::select! {
+                block = stream.next() => match block {
+                    Some(block) => block,
+                    None => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                },
+                _ = cancel.cancelled() => {
+                   break;
+                },
+            };
+            debug!("Block update");
+            gauge!("iris_current_block").set(block.value.slot as f64);
+
+            let block_update = block.value;
+            if let Some(block) = block_update.block {
+                let slot = block_update.slot;
+                let _block_time = block.block_time;
+                debug!("Block update: {:?}", slot);
+                if let Some(signatures) = block.signatures {
+                    for signature in signatures {
+                        signature_store.insert(signature, slot);
                     }
                 }
-                error!("Block stream ended unexpectedly!!");
-                drop(stream);
-                unsub().await;
-                //critical error
-                shutdown.store(true, Ordering::Relaxed);
-            }
-            Err(e) => {
-                error!("Error subscribing to block updates {:?}", e);
-                shutdown.store(true, Ordering::Relaxed);
-                return;
+                // remove old signatures to prevent leak of memory < slot - retain_slot_count
+                signature_store.retain(|_, v| *v > slot - retain_slot_count);
+                gauge!("iris_signature_store_size").set(signature_store.len() as f64);
             }
         }
+        unsub().await;
+        Ok(())
     })
 }
 
 fn spawn_ws_slot_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
+    cancel: CancellationToken,
     current_slot: Arc<AtomicU64>,
-    ws_client: Arc<PubsubClient>,
-) -> JoinHandle<()> {
-    runtime.spawn(async move {
-        let subscription = ws_client.slot_updates_subscribe().await.unwrap();
-        let (mut stream, unsub) = subscription;
-        while let Some(slot_update) = stream.next().await {
-            if shutdown.load(Ordering::Relaxed) {
-                break;
-            }
+    ws_url: String,
+) -> JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        let ws_client = PubsubClient::new(&ws_url)
+            .await
+            .context("cannot connect to ws rpc node")?;
+        let (mut stream, unsub) = ws_client.slot_updates_subscribe().await?;
+        loop {
+            let slot_update = tokio::select! {
+                update = stream.next() => match update {
+                    Some(update) => update,
+                    None => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                },
+                _ = cancel.cancelled() => {
+                    break;
+                },
+            };
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
@@ -195,35 +210,35 @@ fn spawn_ws_slot_listener(
             gauge!("iris_current_slot").set(slot as f64);
             current_slot.store(slot, Ordering::SeqCst);
         }
-        error!("Slot stream ended unexpectedly!!");
-        drop(stream);
         unsub().await;
-        shutdown.store(true, Ordering::Relaxed);
+        Ok(())
     })
 }
 
 fn spawn_grpc_block_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
+    cancel: CancellationToken,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
     endpoint: String,
-) -> JoinHandle<()> {
+) -> JoinHandle<anyhow::Result<()>> {
     let max_retries = 10;
-    runtime.spawn(async move {
-        let mut retries = 0;
+    const RETRY_INTERVAL: Duration = Duration::from_secs(1);
+    const TIMEOUT_INTERVAL: Duration = Duration::from_secs(20);
+    tokio::spawn(async move {
+        let mut conn_retries = 0;
         loop {
-            retries += 1;
-            if retries > max_retries {
+            conn_retries += 1;
+            if conn_retries > max_retries {
                 error!("Max retries reached, shutting down geyser grpc block listener");
-                shutdown.store(true, Ordering::Relaxed);
-                return;
+                return Err(anyhow::Error::msg(
+                    "Max retries reached, shutting down geyser grpc block listener",
+                ));
             }
 
             let client = GeyserGrpcClient::build_from_shared(endpoint.clone());
             if let Err(e) = client {
                 error!("Error creating geyser grpc client: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
 
@@ -235,14 +250,14 @@ fn spawn_grpc_block_listener(
             let connection = client.connect().await;
             if let Err(e) = connection {
                 error!("Error connecting to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
 
             let subscription = connection.unwrap().subscribe().await;
             if let Err(e) = subscription {
                 error!("Error subscribing to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
 
@@ -250,16 +265,24 @@ fn spawn_grpc_block_listener(
             info!("Subscribing to grpc block updates..");
             if let Err(e) = grpc_tx.send(block_subscribe_request!()).await {
                 error!("Error sending subscription request: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
-            'event_loop: while let Ok(Some(update)) =
-                timeout(Duration::from_secs(60), grpc_rx.next()).await
-            {
-                retries = 0;
-                if shutdown.load(Ordering::Relaxed) {
-                    return;
-                }
+            //connection established successfully, reset retries for connection
+            conn_retries = 0;
+            'event_loop: loop {
+                let update = tokio::select! {
+                    maybe_update = timeout(TIMEOUT_INTERVAL, grpc_rx.next()) => match maybe_update {
+                        Ok(Some(update)) => update,
+                        _ => {
+                            //try reconnecting again`
+                             break 'event_loop;
+                        }
+                    },
+                    _ = cancel.cancelled() => {
+                        return Ok(())
+                    }
+                };
                 match update {
                     Ok(message) => match message.update_oneof {
                         Some(UpdateOneof::Block(block)) => {
@@ -287,7 +310,6 @@ fn spawn_grpc_block_listener(
                     },
                     Err(e) => {
                         error!("Error block updates subscription {:?}", e);
-                        tokio::time::sleep(Duration::from_secs(2)).await;
                         break 'event_loop;
                     }
                 }

@@ -1,35 +1,35 @@
 use crate::utils::SendTransactionClient;
+use anyhow::anyhow;
 use metrics::counter;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
 };
-use solana_tpu_client_next::leader_updater::LeaderUpdater;
+use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
-use std::net::{Ipv4Addr, SocketAddr};
-use tokio::runtime::Handle;
+use std::sync::Arc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, span, Instrument, Level};
+use tracing::error;
 
 pub struct TpuClientNextSender {
-    runtime: Handle,
     update_certificate_sender: tokio::sync::watch::Sender<Option<StakeIdentity>>,
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
-    cancel: CancellationToken,
 }
 
 pub const MAX_CONNECTIONS: usize = 60;
 
 impl TpuClientNextSender {
-    pub(crate) fn create_client(
-        runtime_handle: Handle,
-        leader_updater: Box<dyn LeaderUpdater>,
+    pub(crate) fn spawn_client(
+        num_threads: usize,
+        rpc: Arc<RpcClient>,
+        ws_url: String,
         leader_forward_count: usize,
         validator_identity: Keypair,
         cancel: CancellationToken,
-    ) -> Self {
+    ) -> (Self, std::thread::JoinHandle<()>) {
         let (sender, receiver) = tokio::sync::mpsc::channel(128);
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
         let udp_sock =
@@ -47,19 +47,40 @@ impl TpuClientNextSender {
                 send: leader_forward_count,
             },
         };
-        let scheduler = ConnectionWorkersScheduler::new(
-            leader_updater,
-            receiver,
-            update_certificate_receiver,
-            cancel.clone(),
-        );
-        let _handle = runtime_handle.spawn(scheduler.run(config));
-        TpuClientNextSender {
-            runtime: runtime_handle,
+
+        let handle = std::thread::Builder::new()
+            .name("tpu-next-client-t".to_owned())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(num_threads)
+                    .enable_all()
+                    .thread_name("tpu-next-client-rt")
+                    .build()
+                    .unwrap();
+                let res: anyhow::Result<()> = rt.block_on(async move {
+                    let leader_updater = create_leader_updater(rpc, ws_url, None)
+                        .await
+                        .map_err(|e| anyhow!(e))?;
+                    let scheduler = ConnectionWorkersScheduler::new(
+                        leader_updater,
+                        receiver,
+                        update_certificate_receiver,
+                        cancel.clone(),
+                    );
+                    scheduler.run(config).await.map_err(|e| anyhow!(e))?;
+                    Ok(())
+                });
+                if let Err(e) = res {
+                    error!("tpu-next-client-t: {:?}", e);
+                }
+            })
+            .unwrap();
+
+        let this = TpuClientNextSender {
             update_certificate_sender,
             sender,
-            cancel,
-        }
+        };
+        (this, handle)
     }
 }
 

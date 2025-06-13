@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use smallvec::SmallVec;
-use solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH};
+use solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PacketBatch, PACKETS_PER_BATCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -99,8 +99,7 @@ pub fn packet_batch_sender(
                 // 14% of them come in multiple chunks. In that case, we copy
                 // them into one `Bytes` buffer. We make a copy once, with
                 // intention to not do it again.
-                let num_chunks = packet_accumulator.chunks.len();
-                let mut packet = if packet_accumulator.chunks.len() == 1 {
+                let packet = if packet_accumulator.chunks.len() == 1 {
                     BytesPacket::new(
                         packet_accumulator.chunks.pop().expect("expected one chunk"),
                         packet_accumulator.meta,

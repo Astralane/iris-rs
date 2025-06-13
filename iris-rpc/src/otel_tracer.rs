@@ -4,27 +4,20 @@ use opentelemetry_otlp::{LogExporter, WithExportConfig};
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::Resource;
 use serde::Deserialize;
-use std::fmt::Debug;
 use tracing::subscriber::set_global_default;
 use tracing::Subscriber;
 use tracing_log::LogTracer;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, EnvFilter, Layer, Registry};
+use tracing_subscriber::{fmt, EnvFilter, Registry};
 
-pub async fn get_subscriber_with_otpl<Sink>(
-    endpoint: String,
-    sink: Sink,
-) -> impl Subscriber + Send + Sync
+pub fn get_subscriber_with_otpl<Sink>(endpoint: String, sink: Sink) -> impl Subscriber + Send + Sync
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
     let service_name = format!(
         "iris_{}",
-        get_server_public_ip()
-            .await
-            .unwrap_or(String::from("unknown_instance"))
+        get_server_public_ip().unwrap_or(String::from("unknown_instance"))
     );
     let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_batch_exporter(
@@ -80,9 +73,9 @@ struct IpResponse {
     ip: String,
 }
 
-async fn get_server_public_ip() -> Result<String, reqwest::Error> {
+fn get_server_public_ip() -> Result<String, reqwest::Error> {
     let url = "https://api.ipify.org?format=json";
-    let response = reqwest::get(url).await?;
-    let ip_data: IpResponse = response.json().await?;
+    let response = reqwest::blocking::get(url)?;
+    let ip_data: IpResponse = response.json()?;
     Ok(ip_data.ip)
 }
