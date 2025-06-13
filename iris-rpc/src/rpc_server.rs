@@ -47,14 +47,6 @@ pub fn spawn_jsonrpc_server(
     std::thread::Builder::new()
         .name("jsonrpc-server-t".to_string())
         .spawn(move || {
-            let iris_rpc = IrisRpcServerImpl::new(
-                txn_sender,
-                store,
-                chain_state,
-                Duration::from_secs(retry_interval.as_secs()),
-                cancel.clone(),
-                max_retries,
-            );
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("jsonrpc-server-rt".to_string())
@@ -62,6 +54,15 @@ pub fn spawn_jsonrpc_server(
                 .build()
                 .unwrap();
             rt.block_on(async move {
+                let iris_rpc = IrisRpcServerImpl::new(
+                    txn_sender,
+                    store,
+                    chain_state,
+                    Duration::from_secs(retry_interval.as_secs()),
+                    cancel.clone(),
+                    max_retries,
+                );
+
                 let rpc_server = ServerBuilder::default()
                     .max_connections(1_000)
                     .set_tcp_no_delay(true)

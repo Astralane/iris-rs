@@ -37,7 +37,7 @@ pub struct Config {
     quic_server_threads: Option<usize>,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
-    max_retries: u32,
+    tx_max_retries: u32,
     rpc_num_threads: Option<usize>,
     tpu_client_num_threads: Option<usize>,
     //The number of connections to be maintained by the scheduler.
@@ -54,7 +54,7 @@ pub struct Config {
     leader_forward_count: u64,
     prometheus_addr: SocketAddr,
     metrics_update_interval_secs: Option<u64>,
-    retry_interval_seconds: u32,
+    tx_retry_interval_seconds: u32,
     otpl_endpoint: Option<String>,
 }
 
@@ -125,9 +125,9 @@ fn main() -> anyhow::Result<()> {
         tx_client,
         txn_store,
         Arc::new(chain_state),
-        Duration::from_secs(config.retry_interval_seconds as u64),
+        Duration::from_secs(config.tx_retry_interval_seconds as u64),
         cancel.clone(),
-        config.max_retries,
+        config.tx_max_retries,
     );
 
     rpc_handle.join().unwrap();

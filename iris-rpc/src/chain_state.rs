@@ -25,6 +25,9 @@ use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBloc
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
+const RETRY_INTERVAL: u64 = 1000;
+const MAX_RETRIES: usize = 5;
+
 macro_rules! ping_request {
     () => {
         SubscribeRequest {
@@ -71,42 +74,57 @@ impl ChainStateWsClient {
         let current_slot = Arc::new(AtomicU64::new(0));
         let signature_store = Arc::new(DashMap::new());
 
-        let block_listener_hdl = if let Some(grpc_url) = grpc_url {
-            spawn_grpc_block_listener(
-                cancel.clone(),
-                signature_store.clone(),
-                retain_slot_count,
-                grpc_url,
-            )
-        } else {
-            spawn_ws_block_listener(
-                cancel.clone(),
-                signature_store.clone(),
-                retain_slot_count,
-                ws_url.clone(),
-            )
-        };
-
-        let slot_listener_hdl =
-            spawn_ws_slot_listener(cancel.clone(), current_slot.clone(), ws_url);
-
         let handle = std::thread::Builder::new()
             .name("chain-updater-t".to_string())
-            .spawn(move || {
-                let rt = runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let res = rt.block_on(futures::future::try_join(
-                    block_listener_hdl,
-                    slot_listener_hdl,
-                ));
-                if let Err(err) = res {
-                    error!("unexpected error in chain-updater-t: {:?}", err);
-                    cancel.cancel()
+            .spawn({
+                let current_slot = current_slot.clone();
+                let signature_store = signature_store.clone();
+                move || {
+                    let rt = runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let block_listener_hdl = if let Some(grpc_url) = grpc_url {
+                        spawn_grpc_block_listener(
+                            rt.handle().clone(),
+                            cancel.clone(),
+                            signature_store.clone(),
+                            retain_slot_count,
+                            grpc_url,
+                        )
+                    } else {
+                        spawn_ws_block_listener(
+                            rt.handle().clone(),
+                            cancel.clone(),
+                            signature_store.clone(),
+                            retain_slot_count,
+                            ws_url.clone(),
+                        )
+                    };
+
+                    let slot_listener_hdl = spawn_ws_slot_listener(
+                        rt.handle().clone(),
+                        cancel.clone(),
+                        current_slot.clone(),
+                        ws_url,
+                    );
+
+                    let res = rt.block_on(futures::future::try_join(
+                        block_listener_hdl,
+                        slot_listener_hdl,
+                    ));
+                    if let Err(err) = res {
+                        error!("unexpected error in chain-updater-t: {:?}", err);
+                        cancel.cancel()
+                    }
                 }
             })
             .unwrap();
+
+        while current_slot.load(Ordering::Relaxed) == 0 {
+            info!("waiting for first slot update for startup");
+            std::thread::sleep(Duration::from_millis(RETRY_INTERVAL));
+        }
 
         let this = Self {
             slot: current_slot,
@@ -127,12 +145,13 @@ impl ChainStateClient for ChainStateWsClient {
     }
 }
 fn spawn_ws_block_listener(
+    handle: tokio::runtime::Handle,
     cancel: CancellationToken,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
     ws_url: String,
 ) -> JoinHandle<anyhow::Result<()>> {
-    tokio::spawn(async move {
+    handle.spawn(async move {
         let ws_client = PubsubClient::new(&ws_url)
             .await
             .context("error creating ws_client")?;
@@ -182,11 +201,12 @@ fn spawn_ws_block_listener(
 }
 
 fn spawn_ws_slot_listener(
+    handle: tokio::runtime::Handle,
     cancel: CancellationToken,
     current_slot: Arc<AtomicU64>,
     ws_url: String,
 ) -> JoinHandle<anyhow::Result<()>> {
-    tokio::spawn(async move {
+    handle.spawn(async move {
         let ws_client = PubsubClient::new(&ws_url)
             .await
             .context("cannot connect to ws rpc node")?;
@@ -216,6 +236,7 @@ fn spawn_ws_slot_listener(
 }
 
 fn spawn_grpc_block_listener(
+    handle: tokio::runtime::Handle,
     cancel: CancellationToken,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
@@ -224,7 +245,7 @@ fn spawn_grpc_block_listener(
     let max_retries = 10;
     const RETRY_INTERVAL: Duration = Duration::from_secs(1);
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(20);
-    tokio::spawn(async move {
+    handle.spawn(async move {
         let mut conn_retries = 0;
         loop {
             conn_retries += 1;
