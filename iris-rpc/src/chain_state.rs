@@ -27,6 +27,7 @@ use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
+const TIMEOUT_DURATION: Duration = Duration::from_secs(10);
 
 macro_rules! ping_request {
     () => {
@@ -79,6 +80,7 @@ impl ChainStateWsClient {
             .spawn({
                 let current_slot = current_slot.clone();
                 let signature_store = signature_store.clone();
+                let cancel = cancel.clone();
                 move || {
                     let rt = runtime::Builder::new_current_thread()
                         .enable_all()
@@ -110,8 +112,8 @@ impl ChainStateWsClient {
                     );
 
                     let res = rt.block_on(futures::future::try_join(
-                        block_listener_hdl,
-                        slot_listener_hdl,
+                        async { block_listener_hdl.await? },
+                        async { slot_listener_hdl.await? },
                     ));
                     if let Err(err) = res {
                         error!("unexpected error in chain-updater-t: {:?}", err);
@@ -121,7 +123,7 @@ impl ChainStateWsClient {
             })
             .unwrap();
 
-        while current_slot.load(Ordering::Relaxed) == 0 {
+        while current_slot.load(Ordering::Relaxed) == 0 && !cancel.is_cancelled() {
             info!("waiting for first slot update for startup");
             std::thread::sleep(Duration::from_millis(RETRY_INTERVAL));
         }
@@ -169,9 +171,10 @@ fn spawn_ws_block_listener(
         let (mut stream, unsub) = subscription;
         loop {
             let block = tokio::select! {
-                block = stream.next() => match block {
-                    Some(block) => block,
-                    None => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                block = tokio::time::timeout(TIMEOUT_DURATION, stream.next()) => match block {
+                    Ok(Some(block)) => block,
+                    Ok(None) => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                    Err(_) => return Err(anyhow::Error::msg("block stream timed out")),
                 },
                 _ = cancel.cancelled() => {
                    break;
@@ -213,14 +216,19 @@ fn spawn_ws_slot_listener(
         let (mut stream, unsub) = ws_client.slot_updates_subscribe().await?;
         loop {
             let slot_update = tokio::select! {
-                update = stream.next() => match update {
-                    Some(update) => update,
-                    None => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                update = tokio::time::timeout(TIMEOUT_DURATION, stream.next()) => match update {
+                    Ok(Some(update)) => update,
+                    Ok(None) => return Err(anyhow::Error::msg("block stream closed unexpectedly")),
+                    Err(_) => {
+                        error!("ws slot stream timed out");
+                        return Err(anyhow::Error::msg("block stream timed out"))
+                    },
                 },
                 _ = cancel.cancelled() => {
                     break;
                 },
             };
+            info!("Slot update: {:?}", slot_update);
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
