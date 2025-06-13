@@ -53,6 +53,7 @@ pub struct Config {
     //allowing connections to be established with those leaders in advance.
     leader_forward_count: u64,
     prometheus_addr: SocketAddr,
+    metrics_update_interval_secs: u64,
     retry_interval_seconds: u32,
     otpl_endpoint: String,
 }
