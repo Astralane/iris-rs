@@ -53,10 +53,15 @@ pub struct Config {
     //allowing connections to be established with those leaders in advance.
     leader_forward_count: u64,
     prometheus_addr: SocketAddr,
-    metrics_update_interval_secs: u64,
+    metrics_update_interval_secs: Option<u64>,
     retry_interval_seconds: u32,
-    otpl_endpoint: String,
+    otpl_endpoint: Option<String>,
 }
+
+const DEFAULT_RPC_THREADS: usize = 2;
+const DEFAULT_QUIC_THREADS: usize = 2;
+const DEFAULT_TPU_CLIENT_THREADS: usize = 4;
+const SIGNATURE_RETAIN_SLOTS: u64 = 800; // around 4 mins
 
 fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
@@ -87,17 +92,20 @@ fn main() -> anyhow::Result<()> {
 
     let (chain_state, chain_state_hdl) = ChainStateWsClient::spawn_new(
         cancel.clone(),
-        800, // around 4 mins
+        SIGNATURE_RETAIN_SLOTS,
         config.ws_url.clone(),
         config.grpc_url,
     );
 
     let (tx_client, tpu_next_handle) = TpuClientNextSender::spawn_client(
-        config.tpu_client_num_threads.unwrap_or(4usize),
+        config
+            .tpu_client_num_threads
+            .unwrap_or(DEFAULT_TPU_CLIENT_THREADS),
         rpc.clone(),
         config.ws_url,
         config.leader_forward_count as usize,
         &identity_keypair,
+        config.metrics_update_interval_secs.unwrap_or(10),
         cancel.clone(),
     );
 
@@ -108,12 +116,12 @@ fn main() -> anyhow::Result<()> {
         tx_client.clone(),
         &identity_keypair,
         cancel.clone(),
-        config.quic_server_threads.unwrap_or(4usize),
+        config.quic_server_threads.unwrap_or(DEFAULT_QUIC_THREADS),
     );
 
     let rpc_handle = rpc_server::spawn_jsonrpc_server(
         config.address,
-        config.rpc_num_threads.unwrap_or(4usize),
+        config.rpc_num_threads.unwrap_or(DEFAULT_RPC_THREADS),
         tx_client,
         txn_store,
         Arc::new(chain_state),

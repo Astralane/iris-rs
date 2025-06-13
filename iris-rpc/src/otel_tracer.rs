@@ -11,56 +11,70 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 
-pub fn get_subscriber_with_otpl<Sink>(endpoint: String, sink: Sink) -> impl Subscriber + Send + Sync
+pub fn get_subscriber_with_otpl<Sink>(
+    endpoint: Option<String>,
+    sink: Sink,
+) -> Box<dyn Subscriber + Send + Sync>
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
     let service_name = format!(
-        "iris_{}",
+        "iris_service_{}",
         get_server_public_ip().unwrap_or(String::from("unknown_instance"))
     );
-    let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-        .with_batch_exporter(
-            opentelemetry_otlp::SpanExporter::builder()
-                .with_tonic()
-                .with_endpoint(endpoint.clone())
+    match endpoint {
+        Some(endpoint) => {
+            let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(
+                    opentelemetry_otlp::SpanExporter::builder()
+                        .with_tonic()
+                        .with_endpoint(endpoint.clone())
+                        .build()
+                        .expect("Couldn't create OTLP tracer"),
+                )
+                .with_resource(
+                    Resource::builder()
+                        .with_service_name(service_name.clone())
+                        .build(),
+                )
                 .build()
-                .expect("Couldn't create OTLP tracer"),
-        )
-        .with_resource(
-            Resource::builder()
-                .with_service_name(service_name.clone())
-                .build(),
-        )
-        .build()
-        .tracer("iris");
+                .tracer("iris");
 
-    let telemetry_layer: tracing_opentelemetry::OpenTelemetryLayer<
-        Registry,
-        opentelemetry_sdk::trace::Tracer,
-    > = tracing_opentelemetry::layer().with_tracer(tracer);
+            let telemetry_layer: tracing_opentelemetry::OpenTelemetryLayer<
+                Registry,
+                opentelemetry_sdk::trace::Tracer,
+            > = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let log_tracer = SdkLoggerProvider::builder()
-        .with_batch_exporter(
-            LogExporter::builder()
-                .with_tonic()
-                .with_endpoint(endpoint)
-                .build()
-                .expect("Couldn't create OTL tracer"),
-        )
-        .with_resource(Resource::builder().with_service_name(service_name).build())
-        .build();
+            let log_tracer = SdkLoggerProvider::builder()
+                .with_batch_exporter(
+                    LogExporter::builder()
+                        .with_tonic()
+                        .with_endpoint(endpoint)
+                        .build()
+                        .expect("Couldn't create OTL tracer"),
+                )
+                .with_resource(Resource::builder().with_service_name(service_name).build())
+                .build();
 
-    let logging_layer = OpenTelemetryTracingBridge::new(&log_tracer);
+            let logging_layer = OpenTelemetryTracingBridge::new(&log_tracer);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
-    let format_layer = fmt::Layer::default().with_writer(sink);
+            let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
+            let format_layer = fmt::Layer::default().with_writer(sink);
 
-    Registry::default()
-        .with(telemetry_layer)
-        .with(logging_layer)
-        .with(env_filter)
-        .with(format_layer)
+            Box::new(
+                Registry::default()
+                    .with(telemetry_layer)
+                    .with(logging_layer)
+                    .with(env_filter)
+                    .with(format_layer),
+            )
+        }
+        None => {
+            let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
+            let format_layer = fmt::Layer::default().with_writer(sink);
+            Box::new(Registry::default().with(format_layer).with(env_filter))
+        }
+    }
 }
 
 pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
