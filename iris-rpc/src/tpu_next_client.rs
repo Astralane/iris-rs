@@ -1,6 +1,6 @@
 use crate::utils::SendTransactionClient;
 use anyhow::anyhow;
-use metrics::{counter, gauge};
+use metrics::{counter, gauge, histogram};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
@@ -11,6 +11,7 @@ use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::{ConnectionWorkersScheduler, SendTransactionStats};
 use std::sync::{atomic, Arc};
 use std::time::Duration;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::watch;
 
 use tokio_util::sync::CancellationToken;
@@ -74,8 +75,13 @@ impl TpuClientNextSender {
                         scheduler.get_stats().clone(),
                         metrics_update_interval_secs,
                     ));
-                    scheduler.run(config).await.map_err(|e| anyhow!(e))?;
-                    Ok(())
+                    tokio::select! {
+                        _ = cancel.cancelled() => Ok(()),
+                        result = scheduler.run(config) =>  match result {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(anyhow!(e))
+                        },
+                    }
                 });
                 if let Err(e) = res {
                     error!("tpu-next-client-t: {:?}", e);
@@ -97,14 +103,28 @@ impl SendTransactionClient for TpuClientNextSender {
     }
 
     fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
+        let batch_len = wire_transactions.len() as u64;
+        histogram!("iris_tpu_client_next_txn_batch_len").record(batch_len as f64);
+        counter!("iris_tx_send_to_tpu_client_next").increment(batch_len);
         let txn_batch = TransactionBatch::new(wire_transactions);
-        if let Err(e) = self.sender.try_send(txn_batch) {
-            error!(
-                "Failed to send transaction batch to tpu client next: {:?}",
-                e
-            );
-            counter!("iris_tx_send_to_tpu_client_next_error").increment(1);
+        match self.sender.try_send(txn_batch) {
+            Ok(_) => {
+                counter!("iris_tx_send_to_tpu_client_next_success").increment(batch_len);
+            }
+            Err(error) => match error {
+                TrySendError::Full(_) => {
+                    error!("tpu client next channel full");
+                    counter!("iris_tpu_client_next_channel_full").increment(1);
+                    counter!("iris_dropped_transaction_counted_since_channel_full")
+                        .increment(batch_len);
+                }
+                TrySendError::Closed(_) => {
+                    error!("tpu client next channel closed");
+                    counter!("iris_tpu_client_next_channel_closed").increment(1);
+                    counter!("iris_dropped_transaction_counted_since_channel_closed")
+                        .increment(batch_len);
+                }
+            },
         }
     }
 }
@@ -116,70 +136,70 @@ pub async fn send_metrics_stats(
     let mut tick = tokio::time::interval(Duration::from_secs(metrics_update_interval_secs));
     loop {
         tick.tick().await;
-        gauge!("successfully_sent")
+        gauge!("iris_tpu_client_next_successfully_sent")
             .set(stats.successfully_sent.load(atomic::Ordering::Relaxed) as f64);
-        gauge!("connect_error_cids_exhausted").set(
+        gauge!("iris_tpu_client_next_connect_error_cids_exhausted").set(
             stats
                 .connect_error_cids_exhausted
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connect_error_invalid_remote_address").set(
+        gauge!("iris_tpu_client_next_connect_error_invalid_remote_address").set(
             stats
                 .connect_error_invalid_remote_address
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connect_error_other")
+        gauge!("iris_tpu_client_next_connect_error_other")
             .set(stats.connect_error_other.load(atomic::Ordering::Relaxed) as f64);
-        gauge!("connection_error_application_closed").set(
+        gauge!("iris_tpu_client_next_connection_error_application_closed").set(
             stats
                 .connection_error_application_closed
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_cids_exhausted").set(
+        gauge!("iris_tpu_client_next_connection_error_cids_exhausted").set(
             stats
                 .connection_error_cids_exhausted
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_connection_closed").set(
+        gauge!("iris_tpu_client_next_connection_error_connection_closed").set(
             stats
                 .connection_error_connection_closed
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_locally_closed").set(
+        gauge!("iris_tpu_client_next_connection_error_locally_closed").set(
             stats
                 .connection_error_locally_closed
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_reset")
+        gauge!("iris_tpu_client_next_connection_error_reset")
             .set(stats.connection_error_reset.load(atomic::Ordering::Relaxed) as f64);
-        gauge!("connection_error_timed_out").set(
+        gauge!("iris_tpu_client_next_connection_error_timed_out").set(
             stats
                 .connection_error_timed_out
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_transport_error").set(
+        gauge!("iris_tpu_client_next_connection_error_transport_error").set(
             stats
                 .connection_error_transport_error
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("connection_error_version_mismatch").set(
+        gauge!("iris_tpu_client_next_connection_error_version_mismatch").set(
             stats
                 .connection_error_version_mismatch
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("write_error_closed_stream").set(
+        gauge!("iris_tpu_client_next_write_error_closed_stream").set(
             stats
                 .write_error_closed_stream
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("write_error_connection_lost").set(
+        gauge!("iris_tpu_client_next_write_error_connection_lost").set(
             stats
                 .write_error_connection_lost
                 .load(atomic::Ordering::Relaxed) as f64,
         );
-        gauge!("write_error_stopped")
+        gauge!("iris_tpu_client_next_write_error_stopped")
             .set(stats.write_error_stopped.load(atomic::Ordering::Relaxed) as f64);
-        gauge!("write_error_zero_rtt_rejected").set(
+        gauge!("iris_tpu_client_next_write_error_zero_rtt_rejected").set(
             stats
                 .write_error_zero_rtt_rejected
                 .load(atomic::Ordering::Relaxed) as f64,

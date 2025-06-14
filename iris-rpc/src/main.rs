@@ -16,7 +16,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 mod chain_state;
 mod otel_tracer;
@@ -130,9 +130,9 @@ fn main() -> anyhow::Result<()> {
         config.tx_max_retries,
     );
 
-    rpc_handle.join().unwrap();
-    tpu_next_handle.join().unwrap();
     chain_state_hdl.join().unwrap();
+    tpu_next_handle.join().unwrap();
+    rpc_handle.join().unwrap();
     quic_handle.join().unwrap();
     Ok(())
 }

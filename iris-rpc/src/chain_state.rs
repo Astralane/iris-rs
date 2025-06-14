@@ -27,7 +27,7 @@ use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
-const TIMEOUT_DURATION: Duration = Duration::from_secs(10);
+const TIMEOUT_DURATION: Duration = Duration::from_secs(20);
 
 macro_rules! ping_request {
     () => {
@@ -115,9 +115,9 @@ impl ChainStateWsClient {
                         async { block_listener_hdl.await? },
                         async { slot_listener_hdl.await? },
                     ));
-                    if let Err(err) = res {
-                        error!("unexpected error in chain-updater-t: {:?}", err);
-                        cancel.cancel()
+                    if let Err(err) = &res {
+                        cancel.cancel();
+                        panic!("unexpected error in chain-updater-t: {}", err.to_string());
                     }
                 }
             })
@@ -228,7 +228,7 @@ fn spawn_ws_slot_listener(
                     break;
                 },
             };
-            info!("Slot update: {:?}", slot_update);
+            debug!("Slot update: {:?}", slot_update);
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
