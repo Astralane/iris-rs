@@ -11,7 +11,6 @@ use solana_sdk::signature::Keypair;
 use solana_streamer::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT;
 use solana_streamer::quic::QuicServerError;
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{array, thread};

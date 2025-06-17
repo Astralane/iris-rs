@@ -11,8 +11,6 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{EncodableKey, Keypair, Signer};
 use solana_sdk::transaction::VersionedTransaction;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -46,11 +44,10 @@ impl TestQuicClient {
             bincode::serialize(&dummy_memo_transaction(&self.signer, Default::default()))
                 .ok()
                 .unwrap();
-        self.create_and_send_data_over_stream(&wire_transactions)
-            .await;
+        self.send_data_over_stream(&wire_transactions).await;
     }
 
-    pub async fn create_and_send_data_over_stream(&self, wire_transactions: &[u8]) {
+    pub async fn send_data_over_stream(&self, wire_transactions: &[u8]) {
         let mut send_stream = self.connection.open_uni().await.unwrap();
         send_stream.write_all(&wire_transactions).await.unwrap();
     }
@@ -97,7 +94,7 @@ fn test_forwarder() {
         "iris-quic-forward-t",
         UdpSocket::bind("127.0.0.1:52104").unwrap(),
         sender,
-        keypair,
+        &keypair,
         cancel.clone(),
         4,
     )

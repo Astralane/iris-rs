@@ -5,8 +5,6 @@ use solana_perf::packet::{BytesPacket, BytesPacketBatch, Meta, PacketBatch, PACK
 use solana_perf::sigverify::PacketError;
 use solana_sdk::short_vec::decode_shortu16_len;
 use solana_sdk::signature::SIGNATURE_BYTES;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::trace;

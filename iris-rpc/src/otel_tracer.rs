@@ -4,6 +4,7 @@ use opentelemetry_otlp::{LogExporter, WithExportConfig};
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::Resource;
 use serde::Deserialize;
+use tokio::runtime::Runtime;
 use tracing::subscriber::set_global_default;
 use tracing::Subscriber;
 use tracing_log::LogTracer;
@@ -11,10 +12,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 
-pub fn get_subscriber_with_otpl<Sink>(
-    endpoint: Option<String>,
-    sink: Sink,
-) -> Box<dyn Subscriber + Send + Sync>
+pub fn init_tracing<Sink>(endpoint: Option<String>, sink: Sink) -> Option<Runtime>
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -24,6 +22,13 @@ where
     );
     match endpoint {
         Some(endpoint) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .thread_name("otel_runtime")
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to create Tokio runtime");
+            let guard = rt.enter();
             let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_batch_exporter(
                     opentelemetry_otlp::SpanExporter::builder()
@@ -61,25 +66,24 @@ where
             let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
             let format_layer = fmt::Layer::default().with_writer(sink);
 
-            Box::new(
-                Registry::default()
-                    .with(telemetry_layer)
-                    .with(logging_layer)
-                    .with(env_filter)
-                    .with(format_layer),
-            )
+            let subscriber = Registry::default()
+                .with(telemetry_layer)
+                .with(logging_layer)
+                .with(env_filter)
+                .with(format_layer);
+            LogTracer::init().expect("Failed to set log filter");
+            set_global_default(subscriber).expect("Failed to set subscriber");
+            Some(rt)
         }
         None => {
             let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
             let format_layer = fmt::Layer::default().with_writer(sink);
-            Box::new(Registry::default().with(format_layer).with(env_filter))
+            let subscriber = Registry::default().with(format_layer).with(env_filter);
+            LogTracer::init().expect("Failed to set log filter");
+            set_global_default(subscriber).expect("Failed to set subscriber");
+            None
         }
     }
-}
-
-pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
-    LogTracer::init().expect("Failed to set log filter");
-    set_global_default(subscriber).expect("Failed to set subscriber");
 }
 
 #[derive(Deserialize)]

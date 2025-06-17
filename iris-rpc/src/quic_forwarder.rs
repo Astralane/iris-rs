@@ -30,6 +30,12 @@ impl QuicTxForwarder {
         )
         .unwrap();
 
+        let dedup = moka::sync::Cache::builder()
+            .name("quic_tx_forwarder_deduper")
+            .time_to_live(std::time::Duration::from_secs(60))
+            .max_capacity(500_000)
+            .build();
+
         let forward_handle = std::thread::Builder::new()
             .name("quic_forward_t".to_string())
             .spawn(move || {
@@ -47,6 +53,14 @@ impl QuicTxForwarder {
                     let tx_batch = packet_batch
                         .iter()
                         .map(|packet| packet.data(..).unwrap().to_vec())
+                        .filter(|data| {
+                            if !dedup.contains_key(data) {
+                                false // Already seen
+                            } else {
+                                dedup.insert(data.clone(), ()); // Insert if not seen
+                                true
+                            }
+                        })
                         .collect::<Vec<_>>();
 
                     tx_sender_client.send_transaction_batch(tx_batch);

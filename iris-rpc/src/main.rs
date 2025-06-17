@@ -1,7 +1,7 @@
 #![warn(unused_crate_dependencies)]
 
 use crate::chain_state::ChainStateWsClient;
-use crate::otel_tracer::{get_subscriber_with_otpl, init_subscriber};
+use crate::otel_tracer::init_tracing;
 use crate::tpu_next_client::TpuClientNextSender;
 use figment::providers::Env;
 use figment::Figment;
@@ -70,8 +70,7 @@ fn main() -> anyhow::Result<()> {
 
     dotenv::dotenv().ok();
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
-    let subscriber = get_subscriber_with_otpl(config.otpl_endpoint.clone(), std::io::stdout);
-    init_subscriber(subscriber);
+    let _guard = init_tracing(config.otpl_endpoint.clone(), std::io::stdout);
     let _num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
     let identity_keypair = config

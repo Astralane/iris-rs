@@ -35,9 +35,10 @@ metrics-exporter-prometheus = { workspace = true }
 futures-util = { workspace = true }
 rustls = { workspace = true }
 rand = { workspace = true }
+moka = { workspace = true, features = ["sync"] }
 
 opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true }
+opentelemetry-otlp = { workspace = true, features = ["reqwest-blocking-client"] }
 tracing-opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
