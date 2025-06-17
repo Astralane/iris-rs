@@ -28,7 +28,8 @@ where
                 .enable_all()
                 .build()
                 .expect("Failed to create Tokio runtime");
-            let guard = rt.enter();
+            // open telemetry calls tokio::spawn internally, so we need to enter the runtime context
+            let _guard = rt.enter();
             let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_batch_exporter(
                     opentelemetry_otlp::SpanExporter::builder()
