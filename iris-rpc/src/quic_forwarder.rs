@@ -57,10 +57,10 @@ impl QuicTxForwarder {
                         .filter(|data| {
                             if dedup.contains_key(data) {
                                 counter!("iris_quic_forwarder_deduped").increment(1);
-                                true // Already seen so filter out
+                                false // Already seen so filter out
                             } else {
                                 dedup.insert(data.clone(), ()); // Insert if not seen
-                                false
+                                true
                             }
                         })
                         .collect::<Vec<_>>();
