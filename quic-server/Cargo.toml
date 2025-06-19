@@ -28,3 +28,4 @@ anyhow = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 solana-tpu-client-next = { workspace = true }
+solana-client = { workspace = true }

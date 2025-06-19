@@ -11,6 +11,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{EncodableKey, Keypair, Signer};
 use solana_sdk::transaction::VersionedTransaction;
 use std::net::{SocketAddr, UdpSocket};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +19,7 @@ struct TestQuicClient {
     signer: Keypair,
     connection: Connection,
     interval: Duration,
+    rpc: Arc<solana_client::nonblocking::rpc_client::RpcClient>,
 }
 pub const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
@@ -31,19 +33,23 @@ impl TestQuicClient {
         let endpoint = configure_client_endpoint(socket, Some(&signer)).unwrap();
         let connecting = endpoint.connect(dest_socket, "producer").unwrap();
         let connection = connecting.await.unwrap();
+        let rpc = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+            "http://rpc:8899".to_string(),
+        ));
         println!("Connected");
         Self {
             signer,
             connection,
             interval,
+            rpc,
         }
     }
 
     pub async fn send_dummy_txns(&self) {
-        let wire_transactions =
-            bincode::serialize(&dummy_memo_transaction(&self.signer, Default::default()))
-                .ok()
-                .unwrap();
+        let hash = self.rpc.get_latest_blockhash().await.unwrap();
+        let wire_transactions = bincode::serialize(&dummy_memo_transaction(&self.signer, hash))
+            .ok()
+            .unwrap();
         self.send_data_over_stream(&wire_transactions).await;
     }
 
@@ -55,8 +61,10 @@ impl TestQuicClient {
 
 pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTransaction {
     let compute_budget_ix =
-        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(23000);
-    let data = vec![1u8; 1024 - 5];
+        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(933866);
+    let compute_unit_price =
+        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_price(100_000);
+    let data = vec![4u8; 1024 - 16];
     let memo_instruction = Instruction {
         accounts: vec![AccountMeta::new(signer.pubkey(), true)],
         program_id: MEMO_PROGRAM,
@@ -64,7 +72,7 @@ pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTra
     };
     let versioned_message = Message::try_compile(
         &signer.pubkey(),
-        &vec![compute_budget_ix, memo_instruction],
+        &vec![compute_budget_ix, compute_unit_price, memo_instruction],
         &[],
         blockhash,
     )
@@ -77,7 +85,7 @@ pub fn dummy_memo_transaction(signer: &Keypair, blockhash: Hash) -> VersionedTra
     let hash = tx.verify_and_hash_message().unwrap();
     let serialized = bincode::serialize(&tx).unwrap();
     println!(
-        "created dummy txns with signature {:?}, hash: {:?}, size: {:?} max size: {:?}",
+        "created dummy txns with signature {:?} hash: {:?}, size: {:?} max size: {:?}",
         tx.signatures[0],
         hash,
         serialized.len(),
@@ -118,15 +126,17 @@ fn test_forwarder() {
     let _guard = rt.enter();
     rt.block_on(async move {
         let client = TestQuicClient::create_and_connect(
-            SocketAddr::new("127.0.0.1".parse().unwrap(), 52105),
+            SocketAddr::new("0.0.0.0".parse().unwrap(), 52105),
             signer,
-            SocketAddr::new("127.0.0.1".parse().unwrap(), 52104),
+            SocketAddr::new("100.81.253.106".parse().unwrap(), 13000),
             Duration::from_millis(400),
         )
         .await;
         client.send_dummy_txns().await;
+        println!("sent dummy txns");
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     });
+    std::thread::sleep(std::time::Duration::from_secs(10));
     cancel.cancel();
     println!("exit signalled");
     server.join().unwrap();

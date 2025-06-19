@@ -2157,6 +2157,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "smallvec",
+ "solana-client",
  "solana-net-utils",
  "solana-perf",
  "solana-quic-definitions",
