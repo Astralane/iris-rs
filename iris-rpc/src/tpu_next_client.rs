@@ -47,7 +47,7 @@ impl TpuClientNextSender {
             worker_channel_size: 64,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
-                connect: leader_forward_count,
+                connect: leader_forward_count + 1,
                 send: leader_forward_count,
             },
         };
