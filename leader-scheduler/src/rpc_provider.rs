@@ -1,5 +1,4 @@
 use crate::errors::Error;
-use futures::future::BoxFuture;
 use futures::StreamExt;
 use solana_client::client_error::reqwest::Url;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
@@ -10,10 +9,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
-use tokio_retry::Retry;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -88,14 +85,6 @@ impl RpcProvider {
             },
             receiver,
         ))
-    }
-
-    pub async fn run(
-        urls_to_slot: Arc<Vec<(Url, AtomicU64)>>,
-        cancel: CancellationToken,
-        sender: tokio::sync::mpsc::Sender<u64>,
-    ) -> Result<(), Error> {
-        Ok(())
     }
 
     pub async fn run_subscription(
@@ -181,5 +170,15 @@ impl RpcProvider {
             .get(&url)
             .cloned()
             .expect("No RPC client found for the best URL")
+    }
+
+    pub async fn join(self) {
+        let futures = self.handles.into_iter().collect::<Vec<_>>();
+        let results = futures::future::join_all(futures).await;
+        for result in results {
+            if let Err(e) = result {
+                error!("Error in RPC provider task: {:?}", e);
+            }
+        }
     }
 }

@@ -41,6 +41,7 @@ pem = "1.1.1"
 smallvec = "1.15.0"
 indexmap = "2.9.0"
 futures = "0.3.31"
+lru-cache = "0.1.2"
 jsonrpsee = { version = "=0.24.5", features = ["server", "http-client", "macros"] }
 tokio = "1.45.1"
 env_logger = "0.11.5"

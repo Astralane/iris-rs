@@ -13,3 +13,5 @@ tracing = { workspace = true }
 tokio-retry = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-tpu-client = { workspace = true }
+lru-cache = { workspace = true }
+solana-sdk = { workspace = true }

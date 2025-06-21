@@ -1,16 +1,28 @@
 use crate::errors::Error;
+use crate::leader_cache::LeaderTpuCache;
 use crate::rpc_provider::RpcProvider;
+use solana_sdk::pubkey::Pubkey;
+use solana_tpu_client::tpu_client::MAX_FANOUT_SLOTS;
 use std::collections::VecDeque;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
-use tokio::time::timeout;
+use tokio::time::{interval, timeout};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 // 48 chosen because it's unlikely that 12 leaders in a row will miss their slots
 const MAX_SLOT_SKIP_DISTANCE: u64 = 48;
+/// Default number of slots used to build TPU socket fanout set
+pub const DEFAULT_FANOUT_SLOTS: u64 = 12;
 
+pub const CLUSTER_NODES_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+pub const LEADER_CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Clone)]
 pub struct LeaderScheduler {
+    leader_tpu_cache: Arc<RwLock<LeaderTpuCache>>,
     rpc_provider: Arc<RpcProvider>,
     recent_leader_slots: RecentLeaderSlots,
 }
@@ -22,25 +34,132 @@ impl LeaderScheduler {
         slot_receiver: Receiver<u64>,
         cancellation_token: CancellationToken,
     ) -> Result<Self, Error> {
-        let current_slot = rpc_provider.get_rpc_client().get_slot().await?;
+        let rpc_client = rpc_provider.get_rpc_client();
+        let current_slot = rpc_client.get_slot().await?;
         let recent_leader_slots = RecentLeaderSlots::new(current_slot);
-        tokio::spawn(Self::run_slot_listener(
+
+        let slots_in_epoch = rpc_client.get_epoch_info().await?.slots_in_epoch;
+
+        let fanout_leaders = rpc_client
+            .get_slot_leaders(current_slot, LeaderTpuCache::fanout(slots_in_epoch))
+            .await?;
+
+        let leader_node_info = {
+            let cluster_nodes = rpc_client.get_cluster_nodes().await?;
+            cluster_nodes
+                .into_iter()
+                .filter(|node| fanout_leaders.contains(&Pubkey::from_str(&node.pubkey).unwrap()))
+                .collect::<Vec<_>>()
+        };
+
+        let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(
+            current_slot,
+            slots_in_epoch,
+            fanout_leaders,
+            leader_node_info,
+        )));
+
+        tokio::spawn(Self::run(
             recent_leader_slots.clone(),
+            leader_tpu_cache.clone(),
+            rpc_provider.clone(),
             slot_receiver,
-            cancellation_token,
+            cancellation_token.clone(),
         ));
 
         Ok(Self {
+            leader_tpu_cache,
             rpc_provider,
             recent_leader_slots,
         })
     }
 
-    pub async fn run_slot_listener(
+    async fn run(
         recent_leader_slots: RecentLeaderSlots,
+        tpu_cache: Arc<RwLock<LeaderTpuCache>>,
+        rpc_provider: Arc<RpcProvider>,
+        slot_receiver: Receiver<u64>,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), Error> {
+        tokio::try_join!(
+            Self::run_tpu_cache_refresh(
+                &recent_leader_slots,
+                tpu_cache,
+                rpc_provider,
+                cancellation_token.clone()
+            ),
+            Self::run_slot_listener(&recent_leader_slots, slot_receiver, cancellation_token)
+        )?;
+        Ok(())
+    }
+    pub fn estimated_current_slot(&self) -> u64 {
+        self.recent_leader_slots.estimated_current_slot()
+    }
+
+    async fn run_tpu_cache_refresh(
+        recent_slots: &RecentLeaderSlots,
+        tpu_cache: Arc<RwLock<LeaderTpuCache>>,
+        rpc_provider: Arc<RpcProvider>,
+        cancellation: CancellationToken,
+    ) -> Result<(), Error> {
+        let mut cluster_nodes_interval = interval(CLUSTER_NODES_REFRESH_INTERVAL);
+        let mut leader_nodes_interval = interval(LEADER_CACHE_REFRESH_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    break;
+                }
+                _ = cluster_nodes_interval.tick() => {
+                    let rpc_client = rpc_provider.get_rpc_client();
+                    match rpc_client.get_cluster_nodes().await {
+                        Ok(cluster_nodes) => {
+                            let mut tpu_cache = tpu_cache.write().unwrap();
+                            tpu_cache.update_cluster_nodes(cluster_nodes);
+                        }
+                        Err(e) => {
+                            warn!("Failed to refresh cluster nodes: {:?}", e);
+                        }
+                    }
+                }
+                _ = leader_nodes_interval.tick() => {
+                    let rpc_client = rpc_provider.get_rpc_client();
+                    let estimated_current_slot = recent_slots.estimated_current_slot();
+                    let ( last_slot, last_slot_in_epoch, slots_in_epoch) = {
+                        let leader_tpu_cache = tpu_cache.read().unwrap();
+                        leader_tpu_cache.get_slot_info()
+                    }
+                    let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS){
+                        Some(
+                            rpc_client.get_slot_leaders(
+                                estimated_current_slot,
+                                LeaderTpuCache::fanout(slots_in_epoch)
+                            ).await.ok()
+                        )
+                    } else {
+                        None
+                    }
+                    .flatten();
+
+                    if let Some(slot_leaders) = maybe_slot_leaders {
+                        let mut leader_tpu_cache = tpu_cache.write().unwrap();
+                        leader_tpu_cache.update_leader_cache(
+                            estimated_current_slot,
+                            slot_leaders,
+                        );
+                    }
+
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn run_slot_listener(
+        recent_leader_slots: &RecentLeaderSlots,
         mut receiver: Receiver<u64>,
         cancellation: CancellationToken,
-    ) {
+    ) -> Result<(), Error> {
+        let mut dedup = lru_cache::LruCache::new(128);
         loop {
             let slot = tokio::select! {
                  _ = cancellation.cancelled() => {
@@ -61,8 +180,12 @@ impl LeaderScheduler {
                     }
                 },
             };
-            recent_leader_slots.record_slot(slot);
+            if !dedup.contains_key(&slot) {
+                dedup.insert(slot, ());
+                recent_leader_slots.record_slot(slot);
+            }
         }
+        Ok(())
     }
 }
 
