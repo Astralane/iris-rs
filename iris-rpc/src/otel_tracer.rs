@@ -12,13 +12,14 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 
-pub fn init_tracing<Sink>(endpoint: Option<String>, sink: Sink) -> Option<Runtime>
+pub fn init_tracing<Sink>(endpoint: Option<String>, bind_port: u16, sink: Sink) -> Option<Runtime>
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
     let service_name = format!(
-        "iris_service_{}",
-        get_server_public_ip().unwrap_or(String::from("unknown_instance"))
+        "iris_service_{}:{}",
+        get_server_public_ip().unwrap_or(String::from("unknown_instance")),
+        bind_port
     );
     match endpoint {
         Some(endpoint) => {

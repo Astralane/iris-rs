@@ -70,7 +70,11 @@ fn main() -> anyhow::Result<()> {
 
     dotenv::dotenv().ok();
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
-    let _guard = init_tracing(config.otpl_endpoint.clone(), std::io::stdout);
+    let _guard = init_tracing(
+        config.otpl_endpoint.clone(),
+        config.address.port(),
+        std::io::stdout,
+    );
     let _num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
     let identity_keypair = config
