@@ -56,8 +56,7 @@ impl SmartPubsubClient {
     where
         T: serde::Serialize + Clone + PartialEq + Send + 'static,
         F: Fn(&PubsubClient) -> BoxFuture<'_, PubsubClientResult<(BoxStream<'_, T>, UnsubFn)>>
-            + Send
-            + Sync,
+            + Send,
     {
         let streams_create_fut = self
             .clients
