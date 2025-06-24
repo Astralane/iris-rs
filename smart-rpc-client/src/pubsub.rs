@@ -1,6 +1,7 @@
 use async_stream::stream;
+use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use solana_client::client_error::reqwest::Url;
 use solana_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientResult};
 use solana_client::rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
@@ -11,6 +12,10 @@ use std::sync::Arc;
 pub struct SmartPubsubClient {
     clients: Vec<Arc<PubsubClient>>,
 }
+
+type UnsubFn = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
+type SubscribeResult<'a, T> = PubsubClientResult<(BoxStream<'a, T>, UnsubFn)>;
+
 const DEDUP_BUFFER_SIZE: usize = 1000;
 
 impl SmartPubsubClient {
@@ -24,53 +29,51 @@ impl SmartPubsubClient {
         Ok(Self { clients })
     }
 
-    pub async fn slot_update_subscribe(&self) -> PubsubClientResult<BoxStream<'_, SlotUpdate>> {
-        let streams_create_fut = self
-            .clients
-            .iter()
-            .map(|client| client.slot_updates_subscribe())
-            .collect::<Vec<_>>();
-        let streams_with_unsub = futures_util::future::try_join_all(streams_create_fut).await?;
-        let streams = streams_with_unsub
-            .into_iter()
-            .map(|(stream, _unsub)| stream)
-            .collect::<Vec<_>>();
-        let combined_stream = combine_and_dedup_stream(streams);
-        Ok(combined_stream)
+    pub async fn slot_update_subscribe(&self) -> SubscribeResult<'_, SlotUpdate> {
+        self.subscribe_and_dedup(|client| client.slot_updates_subscribe().boxed())
+            .await
     }
 
-    pub async fn slot_subscribe(&self) -> PubsubClientResult<BoxStream<'_, SlotInfo>> {
-        let streams_create_fut = self
-            .clients
-            .iter()
-            .map(|client| client.slot_subscribe())
-            .collect::<Vec<_>>();
-        let streams_with_unsub = futures_util::future::try_join_all(streams_create_fut).await?;
-        let streams = streams_with_unsub
-            .into_iter()
-            .map(|(stream, _unsub)| stream)
-            .collect::<Vec<_>>();
-        let combined_stream = combine_and_dedup_stream(streams);
-        Ok(combined_stream)
+    pub async fn slot_subscribe(&self) -> SubscribeResult<'_, SlotInfo> {
+        self.subscribe_and_dedup(|client| client.slot_subscribe().boxed())
+            .await
     }
 
     pub async fn block_subscribe(
         &self,
         filter: RpcBlockSubscribeFilter,
         config: Option<RpcBlockSubscribeConfig>,
-    ) -> PubsubClientResult<BoxStream<'_, Response<RpcBlockUpdate>>> {
+    ) -> SubscribeResult<'_, Response<RpcBlockUpdate>> {
+        self.subscribe_and_dedup(|client| {
+            client
+                .block_subscribe(filter.clone(), config.clone())
+                .boxed()
+        })
+        .await
+    }
+
+    async fn subscribe_and_dedup<T, F>(&self, subscribe_fn: F) -> SubscribeResult<'_, T>
+    where
+        T: serde::Serialize + Clone + PartialEq + Send + 'static,
+        F: Fn(&PubsubClient) -> BoxFuture<'_, PubsubClientResult<(BoxStream<'_, T>, UnsubFn)>>
+            + Send
+            + Sync,
+    {
         let streams_create_fut = self
             .clients
             .iter()
-            .map(|client| client.block_subscribe(filter.clone(), config.clone()))
+            .map(|client| subscribe_fn(client))
             .collect::<Vec<_>>();
         let streams_with_unsub = futures_util::future::try_join_all(streams_create_fut).await?;
-        let streams = streams_with_unsub
-            .into_iter()
-            .map(|(stream, _unsub)| stream)
-            .collect::<Vec<_>>();
+        let (streams, unsubs): (Vec<_>, Vec<_>) = streams_with_unsub.into_iter().unzip();
+        let unsub_all = Box::new(move || {
+            async move {
+                futures_util::future::join_all(unsubs.into_iter().map(|unsub| unsub())).await;
+            }
+            .boxed()
+        });
         let combined_stream = combine_and_dedup_stream(streams);
-        Ok(combined_stream)
+        Ok((combined_stream, unsub_all))
     }
 }
 
