@@ -1,6 +1,0 @@
-[package]
-name = "smart_rpc"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]

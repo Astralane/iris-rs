@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-rpc", "leader-scheduler", "quic-server", "smart-rpc-client", "smart_rpc"]
+members = ["iris-rpc", "leader-scheduler", "quic-server", "smart-rpc-client"]
 resolver = "2"
 
 [workspace.package]

@@ -7,10 +7,10 @@ use solana_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientResult
 use solana_client::rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_client::rpc_response::{Response, RpcBlockUpdate, SlotInfo, SlotUpdate};
 use std::collections::VecDeque;
-use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct SmartPubsubClient {
-    clients: Vec<Arc<PubsubClient>>,
+    clients: Vec<PubsubClient>,
 }
 
 type UnsubFn = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
@@ -19,14 +19,19 @@ type SubscribeResult<'a, T> = PubsubClientResult<(BoxStream<'a, T>, UnsubFn)>;
 const DEDUP_BUFFER_SIZE: usize = 64;
 
 impl SmartPubsubClient {
-    pub async fn new_with_commitment(ws_urls: &[Url]) -> PubsubClientResult<Self> {
+    pub async fn new(ws_urls: &[Url]) -> PubsubClientResult<Self> {
         let client_futures = ws_urls
             .iter()
             .map(|url| PubsubClient::new(url.as_str()))
             .collect::<Vec<_>>();
-        let clients_res = futures_util::future::try_join_all(client_futures).await?;
-        let clients: Vec<Arc<PubsubClient>> = clients_res.into_iter().map(Arc::new).collect();
+        let clients = futures_util::future::try_join_all(client_futures).await?;
         Ok(Self { clients })
+    }
+
+    pub async fn shutdown(self) {
+        for client in self.clients.into_iter() {
+            client.shutdown().await.unwrap()
+        }
     }
 
     pub async fn slot_update_subscribe(&self) -> SubscribeResult<'_, SlotUpdate> {

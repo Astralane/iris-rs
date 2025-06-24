@@ -4,15 +4,13 @@ use solana_commitment_config::CommitmentConfig;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
 pub struct SmartRpcClient {
     clients: Vec<Arc<RpcClient>>,
     best_rpc: Arc<AtomicUsize>,
-    runtime: Option<Runtime>,
-    task: Option<tokio::task::JoinHandle<()>>,
     cancel: CancellationToken,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SmartRpcClient {
@@ -21,30 +19,17 @@ impl SmartRpcClient {
         refresh_interval: Duration,
         commitment: Option<CommitmentConfig>,
     ) -> SmartRpcClient {
-        let clients = urls
+        let clients: Vec<_> = urls
             .into_iter()
-            .map(|url| Arc::new(RpcClient::new(url.to_string())))
-            .collect::<Vec<_>>();
-        let current_handle = tokio::runtime::Handle::try_current();
-        let runtime = if current_handle.is_ok() {
-            None
-        } else {
-            Some(
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .thread_name("smart-rpc-rt")
-                    .enable_all()
-                    .build()
-                    .unwrap(),
-            )
-        };
-        let rt_handle = match runtime.as_ref() {
-            Some(rt) => rt.handle().clone(),
-            None => current_handle.unwrap(),
-        };
+            .map(|url| {
+                RpcClient::new_with_commitment(url.to_string(), commitment.unwrap_or_default())
+            })
+            .map(Arc::new)
+            .collect();
+
         let best_rpc = Arc::new(AtomicUsize::new(0));
         let cancel = CancellationToken::new();
-        let task_handle = rt_handle.spawn(Self::watcher_loop(
+        let task_handle = tokio::spawn(Self::watcher_loop(
             clients.clone(),
             best_rpc.clone(),
             refresh_interval,
@@ -52,10 +37,9 @@ impl SmartRpcClient {
         ));
 
         Self {
+            task_handle: Some(task_handle),
             clients,
             best_rpc,
-            runtime,
-            task: Some(task_handle),
             cancel,
         }
     }
@@ -64,8 +48,8 @@ impl SmartRpcClient {
         self.cancel.cancel();
     }
 
-    pub async fn join(self) {
-        if let Some(task_handle) = self.task {
+    pub async fn join(&mut self) {
+        if let Some(task_handle) = self.task_handle.take() {
             task_handle.await.unwrap()
         }
     }
@@ -82,7 +66,7 @@ impl SmartRpcClient {
     ) {
         let mut interval = tokio::time::interval(refresh_interval);
         loop {
-            let tick = tokio::select! {
+            let _tick = tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = interval.tick() => (),
             };
