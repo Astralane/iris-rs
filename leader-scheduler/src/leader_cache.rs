@@ -16,7 +16,6 @@ pub struct LeaderTpuCache {
     // Maps leader pubkey to its TPU-QUIC socket address
     pub(crate) leader_tpu_map: HashMap<Pubkey, SocketAddr>,
     pub(crate) slots_in_epoch: u64,
-    pub(crate) last_slot_in_epoch: u64,
 }
 
 impl LeaderTpuCache {
@@ -32,13 +31,12 @@ impl LeaderTpuCache {
             leaders,
             leader_tpu_map,
             slots_in_epoch,
-            last_slot_in_epoch: unimplemented!(),
         }
     }
 
     // returns the last slot in the cache, and the last slot in the epoch
-    pub fn get_slot_info(&self) -> (u64, u64, u64) {
-        (self.last_slot(), self.last_slot_in_epoch, self.slots_in_epoch)
+    pub fn get_slot_info(&self) -> (u64, u64) {
+        (self.last_slot(), self.slots_in_epoch)
     }
 
     pub(crate) fn extract_cluster_tpu_sockets(
@@ -70,7 +68,7 @@ impl LeaderTpuCache {
     }
 
     // Get the TPU sockets for the current leader and upcoming leaders according to fanout size.
-    fn get_leader_sockets(
+    pub(crate) fn get_leader_sockets(
         &self,
         estimated_current_slot: u64,
         fanout_slots: u64,
@@ -106,12 +104,12 @@ impl LeaderTpuCache {
         self.leader_tpu_map = Self::extract_cluster_tpu_sockets(cluster_nodes);
     }
 
-    pub fn update_leader_cache(
-        &mut self,
-        first_slot: u64,
-        leaders: Vec<Pubkey>,
-    ) {
+    pub fn update_leader_cache(&mut self, first_slot: u64, leaders: Vec<Pubkey>) {
         self.first_slot = first_slot;
         self.leaders = leaders;
+    }
+
+    pub fn update_epoch_info(&mut self, slots_in_epoch: u64) {
+        self.slots_in_epoch = slots_in_epoch;
     }
 }

@@ -27,6 +27,7 @@ mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
+mod leader_updater;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {

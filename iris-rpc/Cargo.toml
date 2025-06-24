@@ -11,9 +11,12 @@ solana-sdk = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }
 
+leader-scheduler = { workspace = true }
+
 yellowstone-grpc-client = { workspace = true }
 yellowstone-grpc-proto = { workspace = true }
 
+async-trait = { workspace = true }
 iris-quic-server = { workspace = true }
 futures = { workspace = true }
 crossbeam-channel = { workspace = true }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-rpc", "leader-scheduler", "quic-server"]
+members = ["iris-rpc", "leader-scheduler", "quic-server", "smart-rpc-client", "smart_rpc"]
 resolver = "2"
 
 [workspace.package]
@@ -8,6 +8,8 @@ edition = "2021"
 
 [workspace.dependencies]
 iris-quic-server = { path = "quic-server" }
+leader-scheduler = { path = "leader-scheduler" }
+smart-rpc-client = { path = "smart-rpc-client" }
 
 solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
@@ -32,6 +34,8 @@ yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.gi
 
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 url = "2.5.4"
+async-stream = "0.3.6"
+borsh = "1.5.7"
 quinn = "0.11.8"
 quinn-proto = "0.11.12"
 socket2 = "0.5.9"
@@ -64,7 +68,7 @@ rand = "0.8.5"
 moka = "0.12.10"
 thiserror = "2.0.12"
 tokio-retry = "0.3.0"
-
+async-trait = "0.1.88"
 opentelemetry = { version = "0.30.0" }
 opentelemetry-otlp = { version = "0.30.0", features = ["default", "grpc-tonic"] }
 tracing-opentelemetry = "0.31.0"
