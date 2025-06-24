@@ -1,2 +1,2 @@
 pub mod pubsub;
-pub mod rpc;
+pub mod rpc_provider;

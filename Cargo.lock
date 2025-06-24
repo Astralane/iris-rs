@@ -2461,6 +2461,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "lru-cache",
+ "smart-rpc-client",
  "solana-client",
  "solana-commitment-config",
  "solana-sdk",
@@ -4285,7 +4286,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "smart_rpc_client"
+name = "smart-rpc-client"
 version = "0.1.0"
 dependencies = [
  "async-stream",

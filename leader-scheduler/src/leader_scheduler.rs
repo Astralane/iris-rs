@@ -1,6 +1,10 @@
 use crate::errors::Error;
 use crate::leader_cache::LeaderTpuCache;
-use crate::rpc_provider::RpcProvider;
+use futures::StreamExt;
+use smart_rpc_client::pubsub::SmartPubsubClient;
+use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
+use solana_client::client_error::reqwest::Url;
+use solana_client::rpc_response::SlotUpdate;
 use solana_sdk::clock::SECONDS_PER_DAY;
 use solana_sdk::pubkey::Pubkey;
 use solana_tpu_client::tpu_client::MAX_FANOUT_SLOTS;
@@ -9,8 +13,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::sync::mpsc::Receiver;
-use tokio::time::{interval, timeout};
+use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
@@ -25,19 +28,18 @@ pub const EPOCH_INFO_REFRESH_INTERVAL: Duration = Duration::from_secs(SECONDS_PE
 
 pub struct LeaderScheduler {
     leader_tpu_cache: Arc<RwLock<LeaderTpuCache>>,
-    rpc_provider: Arc<RpcProvider>,
     recent_leader_slots: RecentLeaderSlots,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl LeaderScheduler {
-    const SLOT_RECEIVER_TIMEOUT: Duration = Duration::from_secs(10);
     pub async fn new(
-        rpc_provider: Arc<RpcProvider>,
-        slot_receiver: Receiver<u64>,
+        rpc_provider: Arc<SmartRpcClientProvider>,
+        ws_urls: &[Url],
         cancellation_token: CancellationToken,
     ) -> Result<Self, Error> {
-        let rpc_client = rpc_provider.get_rpc_client();
+        let rpc_client = rpc_provider.best_rpc();
+        let pub_sub_client = SmartPubsubClient::new(&ws_urls).await?;
         let current_slot = rpc_client.get_slot().await?;
         let recent_leader_slots = RecentLeaderSlots::new(current_slot);
 
@@ -66,13 +68,12 @@ impl LeaderScheduler {
             recent_leader_slots.clone(),
             leader_tpu_cache.clone(),
             rpc_provider.clone(),
-            slot_receiver,
+            pub_sub_client,
             cancellation_token.clone(),
         ));
 
         Ok(Self {
             leader_tpu_cache,
-            rpc_provider,
             recent_leader_slots,
             handle: Some(handle),
         })
@@ -81,8 +82,8 @@ impl LeaderScheduler {
     async fn run(
         recent_leader_slots: RecentLeaderSlots,
         tpu_cache: Arc<RwLock<LeaderTpuCache>>,
-        rpc_provider: Arc<RpcProvider>,
-        slot_receiver: Receiver<u64>,
+        rpc_provider: Arc<SmartRpcClientProvider>,
+        pubsub_client: SmartPubsubClient,
         cancellation_token: CancellationToken,
     ) {
         let res = tokio::try_join!(
@@ -92,7 +93,7 @@ impl LeaderScheduler {
                 rpc_provider,
                 cancellation_token.clone()
             ),
-            Self::run_slot_listener(&recent_leader_slots, slot_receiver, cancellation_token)
+            Self::run_slot_listener(&recent_leader_slots, pubsub_client, cancellation_token)
         );
         if let Err(e) = res {
             error!("LeaderScheduler encountered an error: {:?}", e);
@@ -119,7 +120,7 @@ impl LeaderScheduler {
     async fn run_tpu_cache_refresh(
         recent_slots: &RecentLeaderSlots,
         tpu_cache: Arc<RwLock<LeaderTpuCache>>,
-        rpc_provider: Arc<RpcProvider>,
+        rpc_provider: Arc<SmartRpcClientProvider>,
         cancellation: CancellationToken,
     ) -> Result<(), Error> {
         let mut cluster_nodes_update_interval = interval(CLUSTER_NODES_REFRESH_INTERVAL);
@@ -131,7 +132,7 @@ impl LeaderScheduler {
                     break;
                 }
                 _ = epoch_info_update_interval.tick() => {
-                    let rpc_client = rpc_provider.get_rpc_client();
+                    let rpc_client = rpc_provider.best_rpc();
                     match rpc_client.get_epoch_info().await {
                         Ok(epoch_info) => {
                             let mut leader_tpu_cache = tpu_cache.write().unwrap();
@@ -143,7 +144,7 @@ impl LeaderScheduler {
                     }
                 }
                 _ = cluster_nodes_update_interval.tick() => {
-                    let rpc_client = rpc_provider.get_rpc_client();
+                    let rpc_client = rpc_provider.best_rpc();
                     match rpc_client.get_cluster_nodes().await {
                         Ok(cluster_nodes) => {
                             let mut tpu_cache = tpu_cache.write().unwrap();
@@ -155,7 +156,7 @@ impl LeaderScheduler {
                     }
                 }
                 _ = leader_nodes_update_interval.tick() => {
-                    let rpc_client = rpc_provider.get_rpc_client();
+                    let rpc_client = rpc_provider.best_rpc();
                     let estimated_current_slot = recent_slots.estimated_current_slot();
                     let ( last_slot, slots_in_epoch) = {
                         let leader_tpu_cache = tpu_cache.read().unwrap();
@@ -188,35 +189,36 @@ impl LeaderScheduler {
 
     async fn run_slot_listener(
         recent_leader_slots: &RecentLeaderSlots,
-        mut receiver: Receiver<u64>,
+        pubsub_client: SmartPubsubClient,
         cancellation: CancellationToken,
     ) -> Result<(), Error> {
-        let mut dedup = lru_cache::LruCache::new(128);
+        let (mut stream, unsub) = pubsub_client.slot_update_subscribe().await?;
         loop {
-            let slot = tokio::select! {
+            let slot_update = tokio::select! {
                  _ = cancellation.cancelled() => {
                     println!("Cancellation requested, exiting slot listener.");
                     break;
                 }
-                maybe_slot = timeout(Self::SLOT_RECEIVER_TIMEOUT, receiver.recv()) => {
+                maybe_slot = stream.next() => {
                     match maybe_slot {
-                        Ok(Some(slot)) => slot,
-                        Ok(None) => {
-                            println!("Receiver closed, exiting slot listener.");
+                        Some(slot) => slot,
+                        None => {
+                            warn!("Slot stream ended unexpectedly, exiting slot listener.");
                             break;
                         }
-                        Err(_) => {
-                            println!("Timeout waiting for slot, retrying...");
-                            continue;
-                        }
                     }
-                },
+                }
             };
-            if !dedup.contains_key(&slot) {
-                dedup.insert(slot, ());
-                recent_leader_slots.record_slot(slot);
-            }
+
+            let slot = match slot_update {
+                SlotUpdate::FirstShredReceived { slot, .. } => slot,
+                SlotUpdate::Completed { slot, .. } => slot + 1,
+                _ => continue,
+            };
+
+            recent_leader_slots.record_slot(slot);
         }
+        unsub().await;
         Ok(())
     }
 }

@@ -6,19 +6,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-pub struct SmartRpcClient {
+pub struct SmartRpcClientProvider {
     clients: Vec<Arc<RpcClient>>,
     best_rpc: Arc<AtomicUsize>,
     cancel: CancellationToken,
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl SmartRpcClient {
+impl SmartRpcClientProvider {
     pub fn new(
         urls: &[Url],
         refresh_interval: Duration,
         commitment: Option<CommitmentConfig>,
-    ) -> SmartRpcClient {
+    ) -> SmartRpcClientProvider {
         let clients: Vec<_> = urls
             .into_iter()
             .map(|url| {

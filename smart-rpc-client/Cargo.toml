@@ -1,5 +1,5 @@
 [package]
-name = "smart_rpc_client"
+name = "smart-rpc-client"
 version.workspace = true
 edition.workspace = true
 
