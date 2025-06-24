@@ -3,7 +3,6 @@ use crate::leader_cache::LeaderTpuCache;
 use futures::StreamExt;
 use smart_rpc_client::pubsub::SmartPubsubClient;
 use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
-use solana_client::client_error::reqwest::Url;
 use solana_client::rpc_response::SlotUpdate;
 use solana_sdk::clock::SECONDS_PER_DAY;
 use solana_sdk::pubkey::Pubkey;
@@ -35,7 +34,7 @@ pub struct LeaderScheduler {
 impl LeaderScheduler {
     pub async fn new(
         rpc_provider: Arc<SmartRpcClientProvider>,
-        ws_urls: &[Url],
+        ws_urls: &[String],
         cancellation_token: CancellationToken,
     ) -> Result<Self, Error> {
         let rpc_client = rpc_provider.best_rpc();

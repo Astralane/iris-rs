@@ -15,7 +15,7 @@ pub struct SmartRpcClientProvider {
 
 impl SmartRpcClientProvider {
     pub fn new(
-        urls: &[Url],
+        urls: &[String],
         refresh_interval: Duration,
         commitment: Option<CommitmentConfig>,
     ) -> SmartRpcClientProvider {

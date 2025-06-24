@@ -2,7 +2,6 @@ use async_stream::stream;
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
-use solana_client::client_error::reqwest::Url;
 use solana_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientResult};
 use solana_client::rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_client::rpc_response::{Response, RpcBlockUpdate, SlotInfo, SlotUpdate};
@@ -19,7 +18,7 @@ type SubscribeResult<'a, T> = PubsubClientResult<(BoxStream<'a, T>, UnsubFn)>;
 const DEDUP_BUFFER_SIZE: usize = 64;
 
 impl SmartPubsubClient {
-    pub async fn new(ws_urls: &[Url]) -> PubsubClientResult<Self> {
+    pub async fn new(ws_urls: &[String]) -> PubsubClientResult<Self> {
         let client_futures = ws_urls
             .iter()
             .map(|url| PubsubClient::new(url.as_str()))

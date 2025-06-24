@@ -41,7 +41,6 @@ pub fn packet_batch_sender(
 ) {
     trace!("enter packet_batch_sender");
     let mut batch_start_time = Instant::now();
-    let mut total_bytes: usize = 0;
 
     loop {
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -112,7 +111,6 @@ pub fn packet_batch_sender(
                     BytesPacket::new(buf.freeze(), packet_accumulator.meta)
                 };
 
-                total_bytes += packet.meta().size;
                 packet_batch.push(packet);
             }
         }

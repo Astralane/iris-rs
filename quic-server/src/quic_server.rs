@@ -6,7 +6,6 @@ use quinn::{Connecting, Endpoint, TokioRuntime};
 use quinn_proto::EndpointConfig;
 use solana_perf::packet::{Meta, PacketBatch, PACKET_DATA_SIZE};
 use solana_quic_definitions::QUIC_CONNECTION_HANDSHAKE_TIMEOUT;
-use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use solana_sdk::signature::Keypair;
 use solana_streamer::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT;
 use solana_streamer::quic::QuicServerError;
@@ -20,6 +19,7 @@ use tracing::log::debug;
 use tracing::{error, info, warn};
 
 pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
+pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
 
 pub struct IrisQuicServer {
     thread: std::thread::JoinHandle<()>,

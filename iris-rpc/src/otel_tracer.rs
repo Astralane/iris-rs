@@ -6,7 +6,6 @@ use opentelemetry_sdk::Resource;
 use serde::Deserialize;
 use tokio::runtime::Runtime;
 use tracing::subscriber::set_global_default;
-use tracing::Subscriber;
 use tracing_log::LogTracer;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;

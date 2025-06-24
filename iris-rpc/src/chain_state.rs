@@ -26,7 +26,6 @@ use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
 const RETRY_INTERVAL: u64 = 1000;
-const MAX_RETRIES: usize = 5;
 const TIMEOUT_DURATION: Duration = Duration::from_secs(20);
 
 macro_rules! ping_request {
