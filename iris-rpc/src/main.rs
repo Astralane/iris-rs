@@ -39,6 +39,7 @@ pub struct Config {
     quic_server_threads: Option<usize>,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
+    block_subscribe_ws: Option<String>,
     tx_max_retries: u32,
     rpc_num_threads: Option<usize>,
     tpu_client_num_threads: Option<usize>,
@@ -72,6 +73,13 @@ fn main() -> anyhow::Result<()> {
 
     dotenv::dotenv().ok();
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
+
+    if config.grpc_url.is_none() && config.block_subscribe_ws.is_none() {
+        return Err(anyhow::anyhow!(
+            "Either grpc_url or block_subscribe_ws must be provided in the configuration",
+        ));
+    }
+
     let _guard = init_tracing(config.otpl_endpoint.clone(), std::io::stdout);
     let _num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
@@ -98,7 +106,9 @@ fn main() -> anyhow::Result<()> {
     let (chain_state, chain_state_hdl) = ChainStateWsClient::spawn_new(
         cancel.clone(),
         SIGNATURE_RETAIN_SLOTS,
-        config.ws_urls[0].clone(),
+        config
+            .block_subscribe_ws
+            .unwrap_or(config.ws_urls[0].clone()),
         config.grpc_url,
     );
 
