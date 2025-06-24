@@ -16,7 +16,7 @@ pub struct SmartPubsubClient {
 type UnsubFn = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 type SubscribeResult<'a, T> = PubsubClientResult<(BoxStream<'a, T>, UnsubFn)>;
 
-const DEDUP_BUFFER_SIZE: usize = 1000;
+const DEDUP_BUFFER_SIZE: usize = 64;
 
 impl SmartPubsubClient {
     pub async fn new_with_commitment(ws_urls: &[Url]) -> PubsubClientResult<Self> {
