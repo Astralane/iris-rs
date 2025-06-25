@@ -1,5 +1,6 @@
 use solana_client::rpc_response::RpcContactInfo;
 use solana_sdk::clock::NUM_CONSECUTIVE_LEADER_SLOTS;
+use solana_sdk::epoch_info::EpochInfo;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -16,12 +17,15 @@ pub struct LeaderTpuCache {
     // Maps leader pubkey to its TPU-QUIC socket address
     pub(crate) leader_tpu_map: HashMap<Pubkey, SocketAddr>,
     pub(crate) slots_in_epoch: u64,
+    //slot where the epoch ends
+    pub(crate) epoch_boundary_slot: u64,
 }
 
 impl LeaderTpuCache {
     pub fn new(
         first_slot: u64,
         slots_in_epoch: u64,
+        epoch_boundary_slot: u64,
         leaders: Vec<Pubkey>,
         cluster_nodes: Vec<RpcContactInfo>,
     ) -> Self {
@@ -31,12 +35,17 @@ impl LeaderTpuCache {
             leaders,
             leader_tpu_map,
             slots_in_epoch,
+            epoch_boundary_slot,
         }
     }
 
     // returns the last slot in the cache, and the last slot in the epoch
-    pub fn get_slot_info(&self) -> (u64, u64) {
-        (self.last_slot(), self.slots_in_epoch)
+    pub fn get_slot_info(&self) -> (u64, u64, u64) {
+        (
+            self.last_slot(),
+            self.slots_in_epoch,
+            self.epoch_boundary_slot,
+        )
     }
 
     pub(crate) fn extract_cluster_tpu_sockets(
@@ -109,7 +118,11 @@ impl LeaderTpuCache {
         self.leaders = leaders;
     }
 
-    pub fn update_epoch_info(&mut self, slots_in_epoch: u64) {
-        self.slots_in_epoch = slots_in_epoch;
+    pub fn update_epoch_info(&mut self, epoch_info: EpochInfo) {
+        self.slots_in_epoch = epoch_info.slots_in_epoch;
+        self.epoch_boundary_slot = epoch_info
+            .absolute_slot
+            .saturating_sub(epoch_info.slot_index)
+            .saturating_add(epoch_info.slots_in_epoch)
     }
 }
