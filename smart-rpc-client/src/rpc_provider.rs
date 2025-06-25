@@ -11,6 +11,7 @@ pub struct SmartRpcClientProvider {
     best_rpc: Arc<AtomicUsize>,
     cancel: CancellationToken,
     task_handle: Option<tokio::task::JoinHandle<()>>,
+    runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl SmartRpcClientProvider {
@@ -26,10 +27,28 @@ impl SmartRpcClientProvider {
             })
             .map(Arc::new)
             .collect();
+        let current_handle = tokio::runtime::Handle::try_current();
+        let runtime = if current_handle.is_ok() {
+            None
+        } else {
+            Some(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .thread_name("rpc-client-provider-rt")
+                    .build()
+                    .unwrap(),
+            )
+        };
+
+        let handle = match runtime.as_ref() {
+            Some(rt) => rt.handle(),
+            None => current_handle.as_ref().unwrap(),
+        };
 
         let best_rpc = Arc::new(AtomicUsize::new(0));
         let cancel = CancellationToken::new();
-        let task_handle = tokio::spawn(Self::watcher_loop(
+        let task_handle = handle.spawn(Self::watcher_loop(
             clients.clone(),
             best_rpc.clone(),
             refresh_interval,
@@ -41,6 +60,7 @@ impl SmartRpcClientProvider {
             clients,
             best_rpc,
             cancel,
+            runtime,
         }
     }
 
