@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use log::error;
 use metrics::gauge;
-use solana_client::nonblocking::pubsub_client::PubsubClient;
+use smart_rpc_client::pubsub::SmartPubsubClient;
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -68,7 +68,7 @@ impl ChainStateWsClient {
     pub fn spawn_new(
         cancel: CancellationToken,
         retain_slot_count: u64,
-        ws_url: String,
+        ws_urls: Vec<String>,
         grpc_url: Option<String>,
     ) -> (Self, std::thread::JoinHandle<()>) {
         let current_slot = Arc::new(AtomicU64::new(0));
@@ -99,7 +99,7 @@ impl ChainStateWsClient {
                             cancel.clone(),
                             signature_store.clone(),
                             retain_slot_count,
-                            ws_url.clone(),
+                            ws_urls.clone(),
                         )
                     };
 
@@ -107,7 +107,7 @@ impl ChainStateWsClient {
                         rt.handle().clone(),
                         cancel.clone(),
                         current_slot.clone(),
-                        ws_url,
+                        ws_urls,
                     );
 
                     let res = rt.block_on(futures::future::try_join(
@@ -150,10 +150,10 @@ fn spawn_ws_block_listener(
     cancel: CancellationToken,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
-    ws_url: String,
+    ws_url: Vec<String>,
 ) -> JoinHandle<anyhow::Result<()>> {
     handle.spawn(async move {
-        let ws_client = PubsubClient::new(&ws_url)
+        let ws_client = SmartPubsubClient::new(&ws_url)
             .await
             .context("error creating ws_client")?;
         let config = Some(RpcBlockSubscribeConfig {
@@ -206,10 +206,10 @@ fn spawn_ws_slot_listener(
     handle: tokio::runtime::Handle,
     cancel: CancellationToken,
     current_slot: Arc<AtomicU64>,
-    ws_url: String,
+    ws_urls: Vec<String>,
 ) -> JoinHandle<anyhow::Result<()>> {
     handle.spawn(async move {
-        let ws_client = PubsubClient::new(&ws_url)
+        let ws_client = SmartPubsubClient::new(&ws_urls)
             .await
             .context("cannot connect to ws rpc node")?;
         let (mut stream, unsub) = ws_client.slot_updates_subscribe().await?;

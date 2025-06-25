@@ -1,4 +1,3 @@
-use solana_client::client_error::reqwest::Url;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use std::sync::atomic::AtomicUsize;
@@ -11,7 +10,7 @@ pub struct SmartRpcClientProvider {
     best_rpc: Arc<AtomicUsize>,
     cancel: CancellationToken,
     task_handle: Option<tokio::task::JoinHandle<()>>,
-    runtime: Option<tokio::runtime::Runtime>,
+    _runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl SmartRpcClientProvider {
@@ -60,7 +59,7 @@ impl SmartRpcClientProvider {
             clients,
             best_rpc,
             cancel,
-            runtime,
+            _runtime: runtime,
         }
     }
 

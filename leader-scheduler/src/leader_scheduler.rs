@@ -191,7 +191,7 @@ impl LeaderScheduler {
         pubsub_client: SmartPubsubClient,
         cancellation: CancellationToken,
     ) -> Result<(), Error> {
-        let (mut stream, unsub) = pubsub_client.slot_update_subscribe().await?;
+        let (mut stream, unsub) = pubsub_client.slot_updates_subscribe().await?;
         loop {
             let slot_update = tokio::select! {
                  _ = cancellation.cancelled() => {

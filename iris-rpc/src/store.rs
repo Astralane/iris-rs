@@ -32,6 +32,7 @@ impl TransactionData {
 
 pub trait TransactionStore: Send + Sync {
     fn add_transaction(&self, transaction: TransactionData);
+    #[allow(dead_code)]
     fn get_signatures(&self) -> Vec<String>;
     fn remove_transaction(&self, signature: String) -> Option<TransactionData>;
     fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>>;

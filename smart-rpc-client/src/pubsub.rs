@@ -33,7 +33,7 @@ impl SmartPubsubClient {
         }
     }
 
-    pub async fn slot_update_subscribe(&self) -> SubscribeResult<'_, SlotUpdate> {
+    pub async fn slot_updates_subscribe(&self) -> SubscribeResult<'_, SlotUpdate> {
         self.subscribe_and_dedup(|client| client.slot_updates_subscribe().boxed())
             .await
     }
