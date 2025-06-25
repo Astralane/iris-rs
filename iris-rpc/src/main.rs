@@ -79,8 +79,12 @@ fn main() -> anyhow::Result<()> {
             "Either grpc_url or block_subscribe_ws must be provided in the configuration",
         ));
     }
-
-    let _guard = init_tracing(config.otpl_endpoint.clone(), std::io::stdout);
+    let _guard = init_tracing(
+        config.otpl_endpoint.clone(),
+        config.address.port(),
+        std::io::stdout,
+    );
+  
     let _num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
     let identity_keypair = config
