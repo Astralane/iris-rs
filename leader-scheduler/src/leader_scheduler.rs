@@ -137,8 +137,8 @@ impl LeaderScheduler {
                 }
                 _ = cluster_nodes_update_interval.tick() => {
                     let rpc_client = rpc_provider.best_rpc();
-                    let cluster_nodes = rpc_client.get_cluster_nodes().await?;
-                    {
+                    let maybe_cluster_nodes = rpc_client.get_cluster_nodes().await.ok();
+                    if let Some(cluster_nodes) = maybe_cluster_nodes {
                         let mut leader_tpu_cache = tpu_cache.write().unwrap();
                         leader_tpu_cache.update_cluster_nodes(cluster_nodes);
                     }
