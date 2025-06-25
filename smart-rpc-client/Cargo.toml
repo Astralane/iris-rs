@@ -1,0 +1,15 @@
+[package]
+name = "smart-rpc-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+solana-client = { workspace = true }
+solana-commitment-config = { workspace = true }
+
+futures-util = { workspace = true }
+futures = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+async-stream = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

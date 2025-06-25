@@ -8,7 +8,8 @@ use figment::Figment;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
-use solana_client::nonblocking::rpc_client::RpcClient;
+use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::fmt::Debug;
 use std::net::{SocketAddr, UdpSocket};
@@ -19,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod chain_state;
+mod leader_updater;
 mod otel_tracer;
 mod quic_forwarder;
 mod rpc;
@@ -30,13 +32,14 @@ mod vendor;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
-    rpc_url: String,
-    ws_url: String,
+    rpc_urls: Vec<String>,
+    ws_urls: Vec<String>,
     address: SocketAddr,
     quic_bind_address: SocketAddr,
     quic_server_threads: Option<usize>,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
+    block_subscribe_ws: Option<String>,
     tx_max_retries: u32,
     rpc_num_threads: Option<usize>,
     tpu_client_num_threads: Option<usize>,
@@ -70,11 +73,18 @@ fn main() -> anyhow::Result<()> {
 
     dotenv::dotenv().ok();
     let config: Config = Figment::new().merge(Env::raw()).extract()?;
+
+    if config.grpc_url.is_none() && config.block_subscribe_ws.is_none() {
+        return Err(anyhow::anyhow!(
+            "Either grpc_url or block_subscribe_ws must be provided in the configuration",
+        ));
+    }
     let _guard = init_tracing(
         config.otpl_endpoint.clone(),
         config.address.port(),
         std::io::stdout,
     );
+  
     let _num_cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
     let identity_keypair = config
@@ -87,7 +97,11 @@ fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
-    let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
+    let rpc_provider = Arc::new(SmartRpcClientProvider::new(
+        &config.rpc_urls,
+        Duration::from_secs(5),
+        Some(CommitmentConfig::confirmed()),
+    ));
 
     info!("config: {:?}", config);
     let cancel = CancellationToken::new();
@@ -96,7 +110,9 @@ fn main() -> anyhow::Result<()> {
     let (chain_state, chain_state_hdl) = ChainStateWsClient::spawn_new(
         cancel.clone(),
         SIGNATURE_RETAIN_SLOTS,
-        config.ws_url.clone(),
+        config
+            .block_subscribe_ws
+            .unwrap_or(config.ws_urls[0].clone()),
         config.grpc_url,
     );
 
@@ -104,8 +120,8 @@ fn main() -> anyhow::Result<()> {
         config
             .tpu_client_num_threads
             .unwrap_or(DEFAULT_TPU_CLIENT_THREADS),
-        rpc.clone(),
-        config.ws_url,
+        rpc_provider,
+        config.ws_urls,
         config.leader_forward_count as usize,
         &identity_keypair,
         config.metrics_update_interval_secs.unwrap_or(10),

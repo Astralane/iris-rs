@@ -1,12 +1,10 @@
 use crate::utils::SendTransactionClient;
 use anyhow::anyhow;
 use metrics::{counter, gauge, histogram};
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
 };
-use solana_tpu_client_next::leader_updater::create_leader_updater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::{ConnectionWorkersScheduler, SendTransactionStats};
 use std::sync::{atomic, Arc};
@@ -14,11 +12,13 @@ use std::time::Duration;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::watch;
 
+use crate::leader_updater::LeaderUpdaterImpl;
+use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 pub struct TpuClientNextSender {
-    update_certificate_sender: tokio::sync::watch::Sender<Option<StakeIdentity>>,
+    _update_certificate_sender: tokio::sync::watch::Sender<Option<StakeIdentity>>,
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
 }
 
@@ -27,8 +27,8 @@ pub const MAX_CONNECTIONS: usize = 60;
 impl TpuClientNextSender {
     pub(crate) fn spawn_client(
         num_threads: usize,
-        rpc: Arc<RpcClient>,
-        ws_url: String,
+        rpc_provider: Arc<SmartRpcClientProvider>,
+        ws_urls: Vec<String>,
         leader_forward_count: usize,
         validator_identity: &Keypair,
         metrics_update_interval_secs: u64,
@@ -62,9 +62,8 @@ impl TpuClientNextSender {
                     .build()
                     .unwrap();
                 let res: anyhow::Result<()> = rt.block_on(async move {
-                    let leader_updater = create_leader_updater(rpc, ws_url, None)
-                        .await
-                        .map_err(|e| anyhow!(e))?;
+                    let leader_updater =
+                        Box::new(LeaderUpdaterImpl::new(rpc_provider, &ws_urls).await?);
                     let scheduler = ConnectionWorkersScheduler::new(
                         leader_updater,
                         receiver,
@@ -90,7 +89,7 @@ impl TpuClientNextSender {
             .unwrap();
 
         let this = TpuClientNextSender {
-            update_certificate_sender,
+            _update_certificate_sender: update_certificate_sender,
             sender,
         };
         (this, handle)

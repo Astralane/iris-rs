@@ -1,5 +1,5 @@
 [workspace]
-members = ["iris-rpc", "quic-server"]
+members = ["iris-rpc", "leader-scheduler", "quic-server", "smart-rpc-client"]
 resolver = "2"
 
 [workspace.package]
@@ -8,21 +8,24 @@ edition = "2021"
 
 [workspace.dependencies]
 iris-quic-server = { path = "quic-server" }
+leader-scheduler = { path = "leader-scheduler" }
+smart-rpc-client = { path = "smart-rpc-client" }
 
-solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git" }
-solana-client = { git = "https://github.com/anza-xyz/agave.git" }
-solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git" }
-solana-version = { git = "https://github.com/anza-xyz/agave.git" }
-solana-rpc-client-api = { git = "https://github.com/anza-xyz/agave.git" }
-solana-net-utils = { git = "https://github.com/anza-xyz/agave.git" }
-solana-streamer = { git = "https://github.com/anza-xyz/agave.git" }
-solana-perf = { git = "https://github.com/anza-xyz/agave.git" }
-solana-tls-utils = { git = "https://github.com/anza-xyz/agave.git" }
-solana-packet = { git = "https://github.com/anza-xyz/agave.git" }
+solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-version = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-rpc-client-api = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-net-utils = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-streamer = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-perf = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-tls-utils = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-packet = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-tpu-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 
-solana-sdk = "~2.2.0"
-solana-quic-definitions = "~2.2.0"
-solana-clock = "2.2.0"
+solana-sdk = "~2.3.0"
+solana-quic-definitions = "~2.3.0"
+solana-clock = "~2.3.0"
 solana-commitment-config = "~2.2.0"
 
 
@@ -31,6 +34,8 @@ yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.gi
 
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 url = "2.5.4"
+async-stream = "0.3.6"
+borsh = "1.5.7"
 quinn = "0.11.8"
 quinn-proto = "0.11.12"
 socket2 = "0.5.9"
@@ -40,6 +45,7 @@ pem = "1.1.1"
 smallvec = "1.15.0"
 indexmap = "2.9.0"
 futures = "0.3.31"
+lru-cache = "0.1.2"
 jsonrpsee = { version = "=0.24.5", features = ["server", "http-client", "macros"] }
 tokio = "1.45.1"
 env_logger = "0.11.5"
@@ -60,7 +66,9 @@ futures-util = "0.3.31"
 rustls = { version = "0.23.17", features = ["ring"] }
 rand = "0.8.5"
 moka = "0.12.10"
-
+thiserror = "2.0.12"
+tokio-retry = "0.3.0"
+async-trait = "0.1.88"
 opentelemetry = { version = "0.30.0" }
 opentelemetry-otlp = { version = "0.30.0", features = ["default", "grpc-tonic"] }
 tracing-opentelemetry = "0.31.0"
