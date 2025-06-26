@@ -150,6 +150,14 @@ impl YellowstoneShieldProvider {
     }
 }
 
+#[async_trait]
+impl BlockListProvider for YellowstoneShieldProvider {
+    async fn fetch_blocked_leaders(&self) -> anyhow::Result<Vec<SocketAddr>> {
+        let response = self.get_blocked_ips().await?;
+        Ok(response)
+    }
+}
+
 #[cfg(test)]
 pub mod test {
     use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
@@ -171,13 +179,5 @@ pub mod test {
         let identities = provider.get_blocked_identities().await.unwrap();
         let addresses = provider.get_blocked_ips().await.unwrap();
         assert_eq!(identities.len(), addresses.len());
-    }
-}
-
-#[async_trait]
-impl BlockListProvider for YellowstoneShieldProvider {
-    async fn fetch_blocked_leaders(&self) -> anyhow::Result<Vec<SocketAddr>> {
-        let response = self.get_blocked_ips().await?;
-        Ok(response)
     }
 }
