@@ -189,7 +189,7 @@ impl IrisRpcServerImpl {
 #[async_trait]
 impl IrisRpcServer for IrisRpcServerImpl {
     async fn health(&self) -> String {
-        "Ok(1.3)".to_string()
+        "Ok(0.2)".to_string()
     }
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
         let version = solana_version::Version::default();
