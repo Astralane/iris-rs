@@ -53,5 +53,8 @@ opentelemetry-appender-tracing = { workspace = true }
 tracing-log = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 
+[dev-dependencies]
+bytes = { workspace = true }
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

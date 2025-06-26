@@ -98,3 +98,47 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub mod test {
+    use bytes::Bytes;
+    use solana_tpu_client_next::transaction_batch::TransactionBatch;
+
+    #[test]
+    pub fn test_mev_protect_serialization_deserialization_case_true() {
+        let test_transaction = [0u8, 128].to_vec();
+        let wire_transaction: Vec<Vec<u8>> = vec![test_transaction, vec![true as u8]];
+        let txn_batch = TransactionBatch::new(wire_transaction);
+        let batch_iter = txn_batch.into_iter();
+
+        let Some((mev_protect, wire_transactions)) = batch_iter.as_slice().split_last() else {
+            // nothing in the slice, nothing to send
+            panic!("cannot get back last elemenet")
+        };
+        let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
+        assert_eq!(true, decoded);
+        assert_eq!(mev_protect, &Bytes::from_static(&[1]));
+        for txn in wire_transactions {
+            assert_eq!(txn, &Bytes::from_static(&[0, 128]));
+        }
+    }
+
+    #[test]
+    pub fn test_mev_protect_serialization_deserialization_case_false() {
+        let test_transaction = [0u8, 128].to_vec();
+        let wire_transaction: Vec<Vec<u8>> = vec![test_transaction, vec![false as u8]];
+        let txn_batch = TransactionBatch::new(wire_transaction);
+        let batch_iter = txn_batch.into_iter();
+
+        let Some((mev_protect, wire_transactions)) = batch_iter.as_slice().split_last() else {
+            // nothing in the slice, nothing to send
+            panic!("cannot get back last elemenet")
+        };
+        let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
+        assert_eq!(false, decoded);
+        assert_eq!(mev_protect, &Bytes::from_static(&[0]));
+        for txn in wire_transactions {
+            assert_eq!(txn, &Bytes::from_static(&[0, 128]));
+        }
+    }
+}
