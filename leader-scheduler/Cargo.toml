@@ -12,8 +12,5 @@ tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 futures = { workspace = true }
 tracing = { workspace = true }
-tokio-retry = { workspace = true }
-solana-commitment-config = { workspace = true }
 solana-tpu-client = { workspace = true }
-lru-cache = { workspace = true }
 solana-sdk = { workspace = true }

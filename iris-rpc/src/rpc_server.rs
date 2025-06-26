@@ -1,6 +1,6 @@
 use crate::rpc::IrisRpcServer;
 use crate::store::{TransactionData, TransactionStore};
-use crate::utils::{ChainStateClient, SendTransactionClient};
+use crate::traits::{ChainStateClient, SendTransactionClient};
 use crate::vendor::solana_rpc::decode_and_deserialize;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::server::ServerBuilder;
@@ -119,6 +119,7 @@ impl IrisRpcServerImpl {
                 }
                 let transactions_map = store.get_transactions();
                 let mut transactions_to_remove = vec![];
+                let mut transactions_to_send_mev_protected = vec![];
                 let mut transactions_to_send = vec![];
                 gauge!("iris_retry_transactions").set(transactions_map.len() as f64);
 
@@ -142,7 +143,15 @@ impl IrisRpcServerImpl {
                         transactions_to_remove.push(txn.key().clone());
                     }
                     if txn.retry_count > 0usize {
-                        transactions_to_send.push(txn.wire_transaction.clone());
+                        match txn.mev_protect {
+                            true => {
+                                transactions_to_send_mev_protected
+                                    .push(txn.value().wire_transaction.clone());
+                            }
+                            false => {
+                                transactions_to_send.push(txn.value().wire_transaction.clone());
+                            }
+                        }
                     }
                     txn.retry_count = txn.retry_count.saturating_sub(1);
                 }
@@ -159,8 +168,19 @@ impl IrisRpcServerImpl {
                     );
                 }
 
+                if transactions_to_send_mev_protected.iter().len() != 0 {
+                    info!(
+                        "retrying {} mev protected transactions",
+                        transactions_to_send_mev_protected.iter().len()
+                    );
+                }
+
                 for batches in transactions_to_send.chunks(10) {
-                    txn_sender.send_transaction_batch(batches.to_vec());
+                    txn_sender.send_transaction_batch(batches.to_vec(), false);
+                }
+
+                for batches in transactions_to_send_mev_protected.chunks(10) {
+                    txn_sender.send_transaction_batch(batches.to_vec(), true);
                 }
             }
         });
@@ -183,6 +203,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         &self,
         txn: String,
         params: RpcSendTransactionConfig,
+        maybe_mev_protect: Option<bool>,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
         if self.store.has_signature(&txn) {
@@ -219,11 +240,14 @@ impl IrisRpcServer for IrisRpcServerImpl {
             versioned_transaction,
             slot,
             params.max_retries.unwrap_or(self.max_retries as usize),
+            maybe_mev_protect.unwrap_or(false),
         );
         // add to store
         self.store.add_transaction(transaction.clone());
-        self.txn_sender
-            .send_transaction(transaction.wire_transaction);
+        self.txn_sender.send_transaction(
+            transaction.wire_transaction,
+            maybe_mev_protect.unwrap_or(false),
+        );
         Ok(signature)
     }
 
@@ -231,6 +255,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         &self,
         batch: Vec<String>,
         params: RpcSendTransactionConfig,
+        maybe_mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>> {
         if batch.len() > 10 {
             counter!("iris_error", "type" => "batch_size_exceeded").increment(1);
@@ -272,13 +297,15 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 versioned_transaction,
                 slot,
                 params.max_retries.unwrap_or(self.max_retries as usize),
+                maybe_mev_protect.unwrap_or(false),
             );
             // add to store
             self.store.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);
             signatures.push(signature);
         }
-        self.txn_sender.send_transaction_batch(wired_transactions);
+        self.txn_sender
+            .send_transaction_batch(wired_transactions, maybe_mev_protect.unwrap_or(false));
         Ok(signatures)
     }
 }

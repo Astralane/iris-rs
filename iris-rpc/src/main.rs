@@ -1,34 +1,24 @@
-#![warn(unused_crate_dependencies)]
-
-use crate::chain_state::ChainStateWsClient;
-use crate::otel_tracer::init_tracing;
-use crate::tpu_next_client::TpuClientNextSender;
 use figment::providers::Env;
 use figment::Figment;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_commitment_config::CommitmentConfig;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::fmt::Debug;
 use std::net::{SocketAddr, UdpSocket};
 use std::num::NonZeroUsize;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 
-mod chain_state;
-mod leader_updater;
-mod otel_tracer;
-mod quic_forwarder;
-mod rpc;
-mod rpc_server;
-mod store;
-mod tpu_next_client;
-mod utils;
-mod vendor;
+use iris_rpc::chain_state::ChainStateWsClient;
+use iris_rpc::otel_tracer::init_tracing;
+use iris_rpc::*;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -53,10 +43,11 @@ pub struct Config {
     //The number of slots to look ahead during the leader estimation procedure.
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
-    leader_forward_count: u64,
+    leaders_fanout: u64,
     prometheus_addr: SocketAddr,
     metrics_update_interval_secs: Option<u64>,
     tx_retry_interval_seconds: u32,
+    shield_policy_key: String,
     otpl_endpoint: Option<String>,
 }
 
@@ -91,6 +82,7 @@ fn main() -> anyhow::Result<()> {
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
+
     let rpc_provider = Arc::new(SmartRpcClientProvider::new(
         &config.rpc_urls,
         Duration::from_secs(5),
@@ -108,17 +100,26 @@ fn main() -> anyhow::Result<()> {
         config.grpc_url,
     );
 
-    let (tx_client, tpu_next_handle) = TpuClientNextSender::spawn_client(
-        config
-            .tpu_client_num_threads
-            .unwrap_or(DEFAULT_TPU_CLIENT_THREADS),
-        rpc_provider,
-        config.ws_urls,
-        config.leader_forward_count as usize,
-        &identity_keypair,
-        config.metrics_update_interval_secs.unwrap_or(10),
-        cancel.clone(),
+    let blocklist_provider = tpu_client::shield::YellowstoneShieldProvider::new(
+        Pubkey::from_str(&config.shield_policy_key)?,
+        rpc_provider.clone(),
     );
+
+    let (tx_client, tpu_next_handle) =
+        tpu_client::tpu_next_client::TpuClientNextSender::spawn_client(
+            config
+                .tpu_client_num_threads
+                .unwrap_or(DEFAULT_TPU_CLIENT_THREADS),
+            rpc_provider,
+            config.ws_urls,
+            config.leaders_fanout as usize,
+            &identity_keypair,
+            config.metrics_update_interval_secs.unwrap_or(10),
+            config.worker_channel_size,
+            config.max_reconnect_attempts,
+            blocklist_provider,
+            cancel.clone(),
+        );
 
     let tx_client = Arc::new(tx_client);
 

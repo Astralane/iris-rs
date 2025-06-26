@@ -12,6 +12,7 @@ pub trait IrisRpc {
         &self,
         txn: String,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<String>;
     #[method(name = "getVersion")]
     async fn get_version(&self) -> RpcResult<RpcVersionInfo>;
@@ -20,5 +21,6 @@ pub trait IrisRpc {
         &self,
         txns: Vec<String>,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>>;
 }

@@ -1,4 +1,3 @@
-use crate::utils::SendTransactionClient;
 use anyhow::anyhow;
 use metrics::{counter, gauge, histogram};
 use solana_sdk::signature::Keypair;
@@ -12,7 +11,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::watch;
 
-use crate::leader_updater::LeaderUpdaterImpl;
+use crate::tpu_client::anti_mev_broadcast::MevProtectedBroadcaster;
+use crate::tpu_client::leader_updater::LeaderUpdaterImpl;
+use crate::traits::{BlockListProvider, SendTransactionClient};
 use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -25,13 +26,16 @@ pub struct TpuClientNextSender {
 pub const MAX_CONNECTIONS: usize = 60;
 
 impl TpuClientNextSender {
-    pub(crate) fn spawn_client(
+    pub fn spawn_client<T: BlockListProvider>(
         num_threads: usize,
         rpc_provider: Arc<SmartRpcClientProvider>,
         ws_urls: Vec<String>,
-        leader_forward_count: usize,
+        leaders_fanout: usize,
         validator_identity: &Keypair,
         metrics_update_interval_secs: u64,
+        worker_channel_size: usize,
+        max_reconnect_attempts: usize,
+        blocklist_provider: T,
         cancel: CancellationToken,
     ) -> (Self, std::thread::JoinHandle<()>) {
         let (sender, receiver) = tokio::sync::mpsc::channel(128);
@@ -43,12 +47,11 @@ impl TpuClientNextSender {
             stake_identity: Some(StakeIdentity::new(validator_identity)),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
-            // experimentally found parameter values
-            worker_channel_size: 64,
-            max_reconnect_attempts: 4,
+            worker_channel_size,
+            max_reconnect_attempts,
             leaders_fanout: Fanout {
-                connect: leader_forward_count + 1,
-                send: leader_forward_count,
+                connect: leaders_fanout + 1,
+                send: leaders_fanout,
             },
         };
 
@@ -70,13 +73,20 @@ impl TpuClientNextSender {
                         update_certificate_receiver,
                         cancel.clone(),
                     );
-                    tokio::spawn(send_metrics_stats(
+                    let metrics_handle = tokio::spawn(send_metrics_stats(
                         scheduler.get_stats().clone(),
                         metrics_update_interval_secs,
                     ));
+                    let blocklist_updater_handle = tokio::spawn(MevProtectedBroadcaster::run_updater(blocklist_provider));
                     tokio::select! {
                         _ = cancel.cancelled() => Ok(()),
-                        result = scheduler.run(config) =>  match result {
+                        _ = blocklist_updater_handle => {
+                            Err(anyhow!("MevProtectedBroadcaster task stopped unexpectedly"))
+                        }
+                        _ = metrics_handle => {
+                            Err(anyhow!("Metrics task stopped unexpectedly"))
+                        }
+                        result = scheduler.run_with_broadcaster::<MevProtectedBroadcaster>(config) =>  match result {
                             Ok(_) => Ok(()),
                             Err(e) => Err(anyhow!(e))
                         },
@@ -97,14 +107,15 @@ impl TpuClientNextSender {
 }
 
 impl SendTransactionClient for TpuClientNextSender {
-    fn send_transaction(&self, wire_transaction: Vec<u8>) {
-        self.send_transaction_batch(vec![wire_transaction]);
+    fn send_transaction(&self, wire_transaction: Vec<u8>, mev_protect: bool) {
+        self.send_transaction_batch(vec![wire_transaction], mev_protect);
     }
 
-    fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+    fn send_transaction_batch(&self, mut wire_transactions: Vec<Vec<u8>>, mev_protect: bool) {
         let batch_len = wire_transactions.len() as u64;
         histogram!("iris_tpu_client_next_txn_batch_len").record(batch_len as f64);
         counter!("iris_tx_send_to_tpu_client_next").increment(batch_len);
+        wire_transactions.push(vec![mev_protect as u8]);
         let txn_batch = TransactionBatch::new(wire_transactions);
         match self.sender.try_send(txn_batch) {
             Ok(_) => {

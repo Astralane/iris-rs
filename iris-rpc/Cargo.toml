@@ -10,6 +10,7 @@ solana-transaction-status = { workspace = true }
 solana-sdk = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }
+solana-commitment-config = { workspace = true }
 
 leader-scheduler = { workspace = true }
 smart-rpc-client = { workspace = true }
@@ -40,6 +41,9 @@ futures-util = { workspace = true }
 rustls = { workspace = true }
 rand = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
+once_cell = { workspace = true }
+arc-swap = { workspace = true }
+borsh = { workspace = true }
 
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, features = ["reqwest-blocking-client"] }
@@ -48,5 +52,6 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-log = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
