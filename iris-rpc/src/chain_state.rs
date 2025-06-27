@@ -1,4 +1,5 @@
-use crate::utils::{generate_random_string, ChainStateClient};
+use crate::traits::ChainStateClient;
+use crate::utils::generate_random_string;
 use anyhow::Context;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};

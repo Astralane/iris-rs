@@ -11,6 +11,7 @@ pub struct TransactionData {
     pub sent_at: Instant,
     pub slot: u64,
     pub retry_count: usize,
+    pub mev_protect: bool,
 }
 
 impl TransactionData {
@@ -19,6 +20,7 @@ impl TransactionData {
         versioned_transaction: VersionedTransaction,
         slot: u64,
         retry_count: usize,
+        mev_protect: bool,
     ) -> Self {
         Self {
             wire_transaction,
@@ -26,6 +28,7 @@ impl TransactionData {
             sent_at: Instant::now(),
             slot,
             retry_count,
+            mev_protect,
         }
     }
 }

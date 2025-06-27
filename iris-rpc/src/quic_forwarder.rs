@@ -1,4 +1,4 @@
-use crate::utils::SendTransactionClient;
+use crate::traits::SendTransactionClient;
 use crossbeam_channel::RecvTimeoutError;
 use iris_quic_server::quic_server::IrisQuicServer;
 use metrics::{counter, histogram};
@@ -68,7 +68,7 @@ impl QuicTxForwarder {
                     histogram!("iris_quic_forwarder_tx_batch_size").record(tx_batch.len() as f64);
                     counter!("iris_quic_forwarder_txns_recieved").increment(tx_batch.len() as u64);
 
-                    tx_sender_client.send_transaction_batch(tx_batch);
+                    tx_sender_client.send_transaction_batch(tx_batch, false);
                 }
             })
             .unwrap();
