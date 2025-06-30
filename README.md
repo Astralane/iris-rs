@@ -17,8 +17,9 @@ A fast and lightweight solana transaction sender, based on amazing previous work
 * QUIC_SERVER_THREADS (**ADDED**)
 * RPC_URLS (**MODIFIED**)
 * WS_URLS (**MODIFIED**)
+* SHIELD_POLICY_KEY(**ADDED**)
 
-**IRIS needs to be run with RUST_LOG="solana_tpu_client_next=info,iris_rpc=info"**
+**IRIS needs to be run with RUST_LOG="solana_tpu_client_next=info,iris_rpc=info,quinn=trace,quin_proto=trace"**
 
 ### Summary of changes
 
@@ -27,5 +28,6 @@ A fast and lightweight solana transaction sender, based on amazing previous work
 * metrics update interval secs is how fast you update metrics, 1 second is good for this
 * threads are added to give the operator more control over how much threads it should use , for small validators 8 threads should be good enough
 * Added backups for rpc url as well as http url since rpcs tend to crash sometimes its important to have a fail over , currently both of these variables accept array as an input . Please note all the addresses provided must be avaible for iris to start
+* added an mev protect feature to prevent users from sending transactions to malicious leaders we are using the following contract address from yellow stone 8LXyNpkdnCKCCaUWBku1wD2B1HHaZ41FRgFEN6jNmytv
 
 
