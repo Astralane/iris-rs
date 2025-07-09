@@ -93,7 +93,7 @@ impl LeaderScheduler {
         start_slot: u64,
         slots_in_epoch: u64,
     ) -> Result<Vec<Pubkey>, crate::errors::Error> {
-        let retry_interval = Duration::from_secs(3);
+        let retry_interval = Duration::from_secs(1);
         Ok(timeout(TPU_LEADER_SERVICE_CREATION_TIMEOUT, async {
             loop {
                 match rpc_client
