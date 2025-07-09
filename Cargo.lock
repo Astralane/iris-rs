@@ -2474,6 +2474,8 @@ dependencies = [
  "futures",
  "smart-rpc-client",
  "solana-client",
+ "solana-commitment-config",
+ "solana-rpc-client-api",
  "solana-sdk",
  "solana-tpu-client",
  "thiserror 2.0.12",

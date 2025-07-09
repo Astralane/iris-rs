@@ -18,7 +18,7 @@ pub struct LeaderTpuCache {
     pub(crate) leader_tpu_map: HashMap<Pubkey, SocketAddr>,
     pub(crate) slots_in_epoch: u64,
     //slot where the epoch ends
-    pub(crate) epoch_boundary_slot: u64,
+    pub(crate) last_slot_in_epoch: u64,
 }
 
 impl LeaderTpuCache {
@@ -35,7 +35,7 @@ impl LeaderTpuCache {
             leaders,
             leader_tpu_map,
             slots_in_epoch,
-            epoch_boundary_slot,
+            last_slot_in_epoch: epoch_boundary_slot,
         }
     }
 
@@ -44,7 +44,7 @@ impl LeaderTpuCache {
         (
             self.last_slot(),
             self.slots_in_epoch,
-            self.epoch_boundary_slot,
+            self.last_slot_in_epoch,
         )
     }
 
@@ -120,7 +120,7 @@ impl LeaderTpuCache {
 
     pub fn update_epoch_info(&mut self, epoch_info: EpochInfo) {
         self.slots_in_epoch = epoch_info.slots_in_epoch;
-        self.epoch_boundary_slot = epoch_info
+        self.last_slot_in_epoch = epoch_info
             .absolute_slot
             .saturating_sub(epoch_info.slot_index)
             .saturating_add(epoch_info.slots_in_epoch)

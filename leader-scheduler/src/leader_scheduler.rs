@@ -3,7 +3,11 @@ use crate::leader_cache::LeaderTpuCache;
 use futures::StreamExt;
 use smart_rpc_client::pubsub::SmartPubsubClient;
 use smart_rpc_client::rpc_provider::SmartRpcClientProvider;
+use solana_client::client_error::ClientError;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::rpc_request::RpcError;
 use solana_client::rpc_response::SlotUpdate;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_tpu_client::tpu_client::MAX_FANOUT_SLOTS;
 use std::collections::VecDeque;
@@ -11,7 +15,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::time::interval;
+use tokio::time::{interval, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
@@ -22,7 +26,7 @@ pub const DEFAULT_FANOUT_SLOTS: u64 = 12;
 
 pub const CLUSTER_NODES_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 pub const LEADER_CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-
+pub const TPU_LEADER_SERVICE_CREATION_TIMEOUT: Duration = Duration::from_secs(20);
 pub struct LeaderScheduler {
     leader_tpu_cache: Arc<RwLock<LeaderTpuCache>>,
     recent_leader_slots: RecentLeaderSlots,
@@ -37,21 +41,18 @@ impl LeaderScheduler {
     ) -> Result<Self, Error> {
         let rpc_client = rpc_provider.best_rpc();
         let pub_sub_client = SmartPubsubClient::new(&ws_urls).await?;
-        let current_slot = rpc_client.get_slot().await?;
+        let current_slot = rpc_client
+            .get_slot_with_commitment(CommitmentConfig::processed())
+            .await?;
         let recent_leader_slots = RecentLeaderSlots::new(current_slot);
 
-        let epoch_info = rpc_client.get_epoch_info().await?;
-        let epoch_boundary_slot = epoch_info
-            .absolute_slot
-            .saturating_sub(epoch_info.slot_index)
-            .saturating_add(epoch_info.slots_in_epoch);
+        let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+        let epoch = epoch_schedule.get_epoch(current_slot);
+        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+        let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
 
-        let fanout_leaders = rpc_client
-            .get_slot_leaders(
-                current_slot,
-                LeaderTpuCache::fanout(epoch_info.slots_in_epoch),
-            )
-            .await?;
+        let fanout_leaders =
+            Self::fetch_fanout_slot_leaders(&rpc_client, current_slot, slots_in_epoch).await?;
 
         let leader_node_info = {
             let cluster_nodes = rpc_client.get_cluster_nodes().await?;
@@ -63,8 +64,8 @@ impl LeaderScheduler {
 
         let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(
             current_slot,
-            epoch_info.slots_in_epoch,
-            epoch_boundary_slot,
+            slots_in_epoch,
+            last_slot_in_epoch,
             fanout_leaders,
             leader_node_info,
         )));
@@ -82,6 +83,37 @@ impl LeaderScheduler {
             recent_leader_slots,
             handle: Some(handle),
         })
+    }
+
+    // When a new epoch is starting, we observe an invalid slot range failure that goes away after a
+    // retry. It seems as if the leader schedule is not available, but it should be. The logic
+    // below retries the RPC call in case of an invalid slot range error.
+    pub async fn fetch_fanout_slot_leaders(
+        rpc_client: &RpcClient,
+        start_slot: u64,
+        slots_in_epoch: u64,
+    ) -> Result<Vec<Pubkey>, crate::errors::Error> {
+        let retry_interval = Duration::from_secs(3);
+        Ok(timeout(TPU_LEADER_SERVICE_CREATION_TIMEOUT, async {
+            loop {
+                match rpc_client
+                    .get_slot_leaders(start_slot, LeaderTpuCache::fanout(slots_in_epoch))
+                    .await
+                {
+                    Ok(leaders) => return Ok(leaders),
+                    Err(client_error) => {
+                        if is_invalid_slot_range_error(&client_error) {
+                            tokio::time::sleep(retry_interval).await;
+                            continue;
+                        } else {
+                            return Err(client_error);
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|e| Error::Custom(format!("{:?}", e)))??)
     }
 
     async fn run(
@@ -158,9 +190,10 @@ impl LeaderScheduler {
 
                     let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS){
                         Some(
-                            rpc_client.get_slot_leaders(
+                            Self::fetch_fanout_slot_leaders(
+                                &rpc_client,
                                 estimated_current_slot,
-                                LeaderTpuCache::fanout(slots_in_epoch)
+                                slots_in_epoch,
                             ).await.ok()
                         )
                     } else {
@@ -263,4 +296,17 @@ impl RecentLeaderSlots {
             .find(|slot| *slot <= max_reasonable_current_slot)
             .unwrap()
     }
+}
+
+fn is_invalid_slot_range_error(client_error: &ClientError) -> bool {
+    if let solana_rpc_client_api::client_error::ErrorKind::RpcError(RpcError::RpcResponseError {
+        code,
+        message,
+        ..
+    }) = client_error.kind()
+    {
+        return *code == -32602
+            && message.contains("Invalid slot range: leader schedule for epoch");
+    }
+    false
 }
