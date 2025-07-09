@@ -14,3 +14,5 @@ futures = { workspace = true }
 tracing = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-sdk = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-rpc-client-api = { workspace = true }

@@ -20,4 +20,7 @@ pub enum Error {
 
     #[error("RPC client error: {0}")]
     RpcClientError(#[from] solana_client::client_error::ClientError),
+
+    #[error("Custom error")]
+    Custom(String),
 }
