@@ -1,6 +1,6 @@
 use solana_client::rpc_response::RpcContactInfo;
 use solana_sdk::clock::NUM_CONSECUTIVE_LEADER_SLOTS;
-use solana_sdk::epoch_info::EpochInfo;
+use solana_sdk::epoch_schedule::EpochSchedule;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -118,11 +118,8 @@ impl LeaderTpuCache {
         self.leaders = leaders;
     }
 
-    pub fn update_epoch_info(&mut self, epoch_info: EpochInfo) {
-        self.slots_in_epoch = epoch_info.slots_in_epoch;
-        self.last_slot_in_epoch = epoch_info
-            .absolute_slot
-            .saturating_sub(epoch_info.slot_index)
-            .saturating_add(epoch_info.slots_in_epoch)
+    pub fn update_epoch_schedule(&mut self, current_slot: u64, epoch_info: EpochSchedule) {
+        self.slots_in_epoch = epoch_info.get_slots_in_epoch(current_slot);
+        self.last_slot_in_epoch = epoch_info.get_last_slot_in_epoch(current_slot);
     }
 }

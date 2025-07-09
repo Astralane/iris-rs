@@ -182,8 +182,8 @@ impl LeaderScheduler {
                         let leader_tpu_cache = tpu_cache.read().unwrap();
                         leader_tpu_cache.get_slot_info()
                     };
-                    let maybe_epoch_info = if estimated_current_slot >= epoch_boundary_slot {
-                        rpc_client.get_epoch_info().await.ok()
+                    let maybe_epoch_schedule = if estimated_current_slot >= epoch_boundary_slot {
+                        rpc_client.get_epoch_schedule().await.ok()
                     } else {
                         None
                     };
@@ -209,9 +209,9 @@ impl LeaderScheduler {
                         );
                     }
 
-                    if let Some(epoch_info) = maybe_epoch_info {
+                    if let Some(epoch_schedule) = maybe_epoch_schedule {
                         let mut leader_tpu_cache = tpu_cache.write().unwrap();
-                        leader_tpu_cache.update_epoch_info(epoch_info);
+                        leader_tpu_cache.update_epoch_schedule(estimated_current_slot, epoch_schedule);
                     }
                 }
             }
