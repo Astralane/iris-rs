@@ -1,7 +1,6 @@
 #![warn(unused_crate_dependencies)]
 
 use crate::chain_state::ChainStateWsClient;
-use crate::connection_cache_client::ConnectionCacheClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
@@ -23,12 +22,13 @@ use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use solana_sdk::signer::EncodableKey;
 use tokio::runtime::Handle;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod chain_state;
-mod connection_cache_client;
 mod rpc;
 mod rpc_server;
 mod store;
@@ -55,7 +55,7 @@ pub struct Config {
     //The number of slots to look ahead during the leader estimation procedure.
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
-    lookahead_slots: u64,
+    leader_forward_count: u64,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to install recorder/exporter");
 
     let shutdown = Arc::new(AtomicBool::new(false));
+    let cancel = CancellationToken::new();
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     info!("creating leader updater...");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
@@ -105,23 +106,12 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
-    let tx_client: Arc<dyn SendTransactionClient> = if config.use_tpu_client_next {
-        log::info!("Using TpuClientNextSender");
-        Arc::new(TpuClientNextSender::create_client(
-            Handle::current(),
-            leader_updater,
-            config.lookahead_slots,
-            identity_keypair,
-        ))
-    } else {
-        log::info!("Using ConnectionCacheClient");
-        Arc::new(ConnectionCacheClient::create_client(
-            Handle::current(),
-            leader_updater,
-            config.lookahead_slots,
-            identity_keypair,
-        ))
-    };
+    let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
+        leader_updater,
+        config.leader_forward_count,
+        Keypair::read_from_file(config.identity_keypair_file.unwrap()).unwrap(),
+        cancel,
+    );
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
         .expect("Failed to connect to websocket");
@@ -134,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
         config.grpc_url,
     ));
     let iris = IrisRpcServerImpl::new(
-        tx_client,
+        Arc::new(tx_client),
         txn_store,
         chain_state,
         Duration::from_secs(config.retry_interval_seconds as u64),
@@ -150,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
+
     //exit when shutdown is triggered
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;

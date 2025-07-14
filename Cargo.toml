@@ -4,23 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
-solana-client = { git = "https://github.com/anza-xyz/agave.git" }
-solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
-solana-sdk = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
-solana-rpc-client-api ={ git = "https://github.com/anza-xyz/agave.git" }
-solana-connection-cache = { git = "https://github.com/anza-xyz/agave.git", default-features = false }
+solana-tpu-client-next = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-rpc-client-api = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 
-yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1" }
-yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v4.0.0+solana.2.1.1", default-features = false }
+solana-sdk = "~2.3.0"
+yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v8.0.0+solana.2.3.3" }
+yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v8.0.0+solana.2.3.3", default-features = false }
 
-jsonrpsee = {version = "=0.24.5", features = ["server", "http-client", "macros"]}
+jsonrpsee = { version = "=0.24.5", features = ["server", "http-client", "macros"] }
 tokio = "1.40.0"
 env_logger = "0.11.5"
 tokio-util = "0.7.12"
 dashmap = "5.5.3"
 bincode = "1.3.3"
-figment = {version = "0.10.19", features = ["env"]}
+figment = { version = "0.10.19", features = ["env"] }
 serde = { version = "1.0.188", features = ["derive"] }
 anyhow = "1.0.91"
 tracing = "0.1.40"
@@ -31,14 +30,9 @@ log = "0.4.22"
 metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16.0"
 futures-util = "0.3.31"
-rustls = { version = "0.23.17", features = ["ring"]  }
+rustls = { version = "0.23.17", features = ["ring"] }
 rand = "0.8.5"
 
-[patch.crates-io]
-solana-program = { git = "https://github.com/anza-xyz/agave.git" }
-solana-curve25519 = { git = "https://github.com/anza-xyz/agave.git" }
-solana-zk-sdk = { git = "https://github.com/anza-xyz/agave.git" }
-solana-zk-token-sdk = { git = "https://github.com/anza-xyz/agave.git" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
