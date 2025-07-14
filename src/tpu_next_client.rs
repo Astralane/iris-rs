@@ -1,4 +1,4 @@
-use crate::utils::{CreateClient, SendTransactionClient};
+use crate::utils::{SendTransactionClient};
 use metrics::counter;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{

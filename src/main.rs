@@ -4,7 +4,7 @@ use crate::chain_state::ChainStateWsClient;
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::tpu_next_client::TpuClientNextSender;
-use crate::utils::{ChainStateClient, CreateClient, SendTransactionClient};
+use crate::utils::{ChainStateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_sdk::signer::EncodableKey;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -22,7 +23,6 @@ use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use solana_sdk::signer::EncodableKey;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
         config.leader_forward_count,
-        Keypair::read_from_file(config.identity_keypair_file.unwrap()).unwrap(),
+        identity_keypair,
         cancel,
     );
     let ws_client = PubsubClient::new(&config.ws_url)
@@ -141,10 +141,7 @@ async fn main() -> anyhow::Result<()> {
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
 
-    //exit when shutdown is triggered
-    while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+    tpu_client_jh.await.expect("tpu client next");
     server_hdl.stop()?;
     server_hdl.stopped().await;
     process::exit(1);
