@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
-        config.leader_fanout,
+        config.leaders_fanout,
         identity_keypair,
         cancel,
     );
