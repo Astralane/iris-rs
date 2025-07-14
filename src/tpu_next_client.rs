@@ -1,4 +1,4 @@
-use crate::utils::SendTransactionClient;
+use crate::utils::{SendTransactionClient};
 use metrics::counter;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
@@ -32,7 +32,7 @@ pub fn spawn_tpu_client_send_txs(
                 bind: BindTarget::Socket(udp_sock),
                 stake_identity: Some(StakeIdentity::new(&validator_identity)),
                 // to match MAX_CONNECTIONS from ConnectionCache
-                num_connections: 1024 / 2,
+                num_connections: 1024,
                 skip_check_transaction_age: true,
                 worker_channel_size: 128,
                 max_reconnect_attempts: 4,
