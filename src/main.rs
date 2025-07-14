@@ -55,7 +55,7 @@ pub struct Config {
     //The number of slots to look ahead during the leader estimation procedure.
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
-    leader_forward_count: u64,
+    leader_fanout: u64,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
     retry_interval_seconds: u32,
@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
-        config.leader_forward_count,
+        config.leader_fanout,
         identity_keypair,
         cancel,
     );
