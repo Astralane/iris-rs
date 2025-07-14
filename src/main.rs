@@ -43,7 +43,7 @@ pub struct Config {
     address: SocketAddr,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
-    max_retries: u32,
+    tx_max_retries: u32,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
     //Whether to skip checking the transaction blockhash expiration.
@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
         chain_state,
         Duration::from_secs(config.retry_interval_seconds as u64),
         shutdown.clone(),
-        config.max_retries,
+        config.tx_max_retries,
     );
 
     let server = ServerBuilder::default()
