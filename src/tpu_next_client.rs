@@ -1,5 +1,5 @@
 use crate::broadcaster::MevProtectedBroadcaster;
-use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX};
+use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX, MEV_PROTECT_TRUE_PREFIX};
 use futures_util::future::{Join, TryJoin};
 use metrics::counter;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -69,16 +69,21 @@ pub fn spawn_tpu_client_send_txs(
 }
 
 impl SendTransactionClient for TpuClientNextSender {
-    fn send_transaction(&self, wire_transaction: Vec<u8>) {
-        self.send_transaction_batch(vec![wire_transaction]);
+    fn send_transaction(&self, wire_transaction: Vec<u8>, mev_protected: bool) {
+        self.send_transaction_batch(vec![wire_transaction], mev_protected);
     }
 
-    fn send_transaction_batch(&self, mut wire_transactions: Vec<Vec<u8>>) {
+    fn send_transaction_batch(&self, mut wire_transactions: Vec<Vec<u8>>, mev_protected: bool) {
         counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
         if wire_transactions.is_empty() {
             return;
         }
-        wire_transactions.push(MEV_PROTECT_FALSE_PREFIX.to_vec());
+        let prefix = if mev_protected {
+            MEV_PROTECT_TRUE_PREFIX
+        } else {
+            MEV_PROTECT_FALSE_PREFIX
+        };
+        wire_transactions.push(prefix.to_vec());
         let txn_batch = TransactionBatch::new(wire_transactions);
         let sender = self.sender.clone();
         tokio::spawn(async move {
