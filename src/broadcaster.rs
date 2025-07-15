@@ -46,15 +46,16 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         // the last element value shows if this transaction requires MEV protection,
         // the actual transactions are everything, but the last element
         // not the best way but done due to limitation on tpu-client-next.
-        let tx_batch = transaction_batch.clone().into_iter();
-        let Some((mev_protect, wire_transactions)) = tx_batch.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            return Ok(());
-        };
+        // let tx_batch = transaction_batch.clone().into_iter();
+        // let Some((mev_protect, wire_transactions)) = tx_batch.as_slice().split_last() else {
+        //     // nothing in the slice, nothing to send
+        //     return Ok(());
+        // };
         //convert the bytes to a boolean
-        let mev_protect = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
-        let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
+        // let mev_protect = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
+        // let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
 
+        let mev_protect = false;
         for (index, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
