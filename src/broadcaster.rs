@@ -55,6 +55,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         // let mev_protect = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
         // let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
 
+        let blocked_leaders = BLOCKED_LEADERS.load().clone();
         let mev_protect = false;
         for (index, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
@@ -63,19 +64,19 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
             }
 
             // //check if the current or next leader is blocked
-            // if mev_protect && BLOCKED_LEADERS.load().contains(new_leader) {
-            //     debug!("Leader {new_leader:?} is blocked, skipping.");
-            //     continue;
-            // }
-            //
-            // let maybe_next_leader = leaders.get(index + 1);
-            //
-            // if let Some(next_leader) = maybe_next_leader {
-            //     if mev_protect && BLOCKED_LEADERS.load().contains(next_leader) {
-            //         debug!("Next leader {next_leader:?} is blocked, skipping.");
-            //         continue;
-            //     }
-            // }
+            if mev_protect && blocked_leaders.contains(new_leader) {
+                debug!("Leader {new_leader:?} is blocked, skipping.");
+                continue;
+            }
+
+            let maybe_next_leader = leaders.get(index + 1);
+
+            if let Some(next_leader) = maybe_next_leader {
+                if mev_protect && blocked_leaders.contains(next_leader) {
+                    debug!("Next leader {next_leader:?} is blocked, skipping.");
+                    continue;
+                }
+            }
 
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
