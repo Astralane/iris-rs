@@ -1,6 +1,9 @@
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 
+pub const MEV_PROTECT_TRUE_PREFIX: &[u8] = &[0x01];
+pub const MEV_PROTECT_FALSE_PREFIX: &[u8] = &[0x00];
+
 pub trait SendTransactionClient: Send + Sync {
     fn send_transaction(&self, txn: Vec<u8>);
     fn send_transaction_batch(&self, wire_transaction: Vec<Vec<u8>>);

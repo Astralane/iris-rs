@@ -1,5 +1,5 @@
 use crate::broadcaster::MevProtectedBroadcaster;
-use crate::utils::SendTransactionClient;
+use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX};
 use futures_util::future::{Join, TryJoin};
 use metrics::counter;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -73,8 +73,12 @@ impl SendTransactionClient for TpuClientNextSender {
         self.send_transaction_batch(vec![wire_transaction]);
     }
 
-    fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+    fn send_transaction_batch(&self, mut wire_transactions: Vec<Vec<u8>>) {
         counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
+        if wire_transactions.is_empty() {
+            return;
+        }
+        wire_transactions.push(MEV_PROTECT_FALSE_PREFIX.to_vec());
         let txn_batch = TransactionBatch::new(wire_transactions);
         let sender = self.sender.clone();
         tokio::spawn(async move {
