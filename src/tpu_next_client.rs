@@ -1,5 +1,9 @@
-use crate::utils::{SendTransactionClient};
+use crate::broadcaster::MevProtectedBroadcaster;
+use crate::utils::SendTransactionClient;
+use futures_util::future::{Join, TryJoin};
 use metrics::counter;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::{
     BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
@@ -8,6 +12,7 @@ use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::ConnectionWorkersScheduler;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -21,12 +26,18 @@ pub fn spawn_tpu_client_send_txs(
     leader_updater: Box<dyn LeaderUpdater>,
     leader_forward_count: u64,
     validator_identity: Keypair,
+    rpc: Arc<RpcClient>,
+    blocklist_key: Pubkey,
     cancel: CancellationToken,
-) -> (TpuClientNextSender, tokio::task::JoinHandle<()>) {
+) -> (
+    TpuClientNextSender,
+    TryJoin<tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>>,
+) {
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
     let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
-    let task = tokio::spawn({
+    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc);
+    let tpu_scheduler_task = tokio::spawn({
         async move {
             let config = ConnectionWorkersSchedulerConfig {
                 bind: BindTarget::Socket(udp_sock),
@@ -48,10 +59,13 @@ pub fn spawn_tpu_client_send_txs(
                 cancel.clone(),
             );
             let stats = scheduler.get_stats();
-            let _ = scheduler.run(config).await;
+            let _ = scheduler
+                .run_with_broadcaster::<MevProtectedBroadcaster>(config)
+                .await;
         }
     });
-    (TpuClientNextSender { sender }, task)
+    let tasks = futures_util::future::try_join(tpu_scheduler_task, broadcaster_task);
+    (TpuClientNextSender { sender }, tasks)
 }
 
 impl SendTransactionClient for TpuClientNextSender {

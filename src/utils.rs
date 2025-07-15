@@ -11,6 +11,10 @@ pub trait ChainStateClient: Send + Sync {
     fn confirm_signature_status(&self, signature: &str) -> Option<u64>;
 }
 
+pub trait BlocklistClient: Send + Sync {
+    fn get_blocklist(&self) -> Vec<String>;
+}
+
 pub fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)

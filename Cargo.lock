@@ -2184,8 +2184,12 @@ name = "iris"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
+ "async-trait",
  "base64 0.22.1",
  "bincode",
+ "borsh 1.5.7",
+ "bytes",
  "dashmap",
  "dotenv",
  "env_logger 0.11.8",
@@ -2195,6 +2199,7 @@ dependencies = [
  "log",
  "metrics",
  "metrics-exporter-prometheus",
+ "once_cell",
  "rand 0.8.5",
  "rustls 0.23.29",
  "serde",
