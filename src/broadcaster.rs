@@ -62,20 +62,20 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
                 continue;
             }
 
-            //check if the current or next leader is blocked
-            if mev_protect && BLOCKED_LEADERS.load().contains(new_leader) {
-                debug!("Leader {new_leader:?} is blocked, skipping.");
-                continue;
-            }
-
-            let maybe_next_leader = leaders.get(index + 1);
-
-            if let Some(next_leader) = maybe_next_leader {
-                if mev_protect && BLOCKED_LEADERS.load().contains(next_leader) {
-                    debug!("Next leader {next_leader:?} is blocked, skipping.");
-                    continue;
-                }
-            }
+            // //check if the current or next leader is blocked
+            // if mev_protect && BLOCKED_LEADERS.load().contains(new_leader) {
+            //     debug!("Leader {new_leader:?} is blocked, skipping.");
+            //     continue;
+            // }
+            //
+            // let maybe_next_leader = leaders.get(index + 1);
+            //
+            // if let Some(next_leader) = maybe_next_leader {
+            //     if mev_protect && BLOCKED_LEADERS.load().contains(next_leader) {
+            //         debug!("Next leader {next_leader:?} is blocked, skipping.");
+            //         continue;
+            //     }
+            // }
 
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
