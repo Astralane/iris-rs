@@ -61,7 +61,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
         //if the current or next leader is in the blocklist don't send the transactions
         if mev_protect {
-            for index in 0..1 {
+            for index in 0..=1 {
                 if let Some(leader) = leaders.get(index) {
                     if blocked_leaders.contains(leader) {
                         return Ok(());
