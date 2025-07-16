@@ -1,0 +1,18 @@
+[package]
+name = "leader-scheduler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+smart-rpc-client = { workspace = true }
+
+thiserror = { workspace = true }
+solana-client = { workspace = true }
+tokio-util = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+futures = { workspace = true }
+tracing = { workspace = true }
+solana-tpu-client = { workspace = true }
+solana-sdk = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-rpc-client-api = { workspace = true }

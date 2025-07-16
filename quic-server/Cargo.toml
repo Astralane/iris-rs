@@ -1,0 +1,31 @@
+[package]
+name = "iris-quic-server"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+name = "iris_quic_server"
+
+[dependencies]
+solana-sdk = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-streamer = { workspace = true }
+solana-quic-definitions = { workspace = true }
+tracing = { workspace = true }
+solana-perf = { workspace = true }
+solana-tls-utils = { workspace = true }
+quinn = { workspace = true }
+quinn-proto = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
+smallvec = { workspace = true }
+pem = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
+solana-tpu-client-next = { workspace = true }
+solana-client = { workspace = true }

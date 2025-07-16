@@ -1,0 +1,60 @@
+[package]
+name = "iris-rpc"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+solana-tpu-client-next = { workspace = true }
+solana-client = { workspace = true }
+solana-transaction-status = { workspace = true }
+solana-sdk = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-version = { workspace = true }
+solana-commitment-config = { workspace = true }
+
+leader-scheduler = { workspace = true }
+smart-rpc-client = { workspace = true }
+
+yellowstone-grpc-client = { workspace = true }
+yellowstone-grpc-proto = { workspace = true }
+
+async-trait = { workspace = true }
+iris-quic-server = { workspace = true }
+futures = { workspace = true }
+crossbeam-channel = { workspace = true }
+jsonrpsee = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+dashmap = { workspace = true }
+bincode = { workspace = true }
+figment = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true }
+dotenv = { workspace = true }
+base64 = { workspace = true }
+log = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+futures-util = { workspace = true }
+rustls = { workspace = true }
+rand = { workspace = true }
+moka = { workspace = true, features = ["sync"] }
+once_cell = { workspace = true }
+arc-swap = { workspace = true }
+borsh = { workspace = true }
+
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true, features = ["reqwest-blocking-client"] }
+tracing-opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+tracing-log = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+
+[dev-dependencies]
+bytes = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

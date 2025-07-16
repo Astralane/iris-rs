@@ -1,0 +1,86 @@
+use crate::traits::SendTransactionClient;
+use crossbeam_channel::RecvTimeoutError;
+use iris_quic_server::quic_server::IrisQuicServer;
+use metrics::{counter, histogram};
+use solana_sdk::signature::Keypair;
+use std::net::UdpSocket;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+pub struct QuicTxForwarder {
+    iris_quic_server: IrisQuicServer,
+    forward_handle: std::thread::JoinHandle<()>,
+}
+impl QuicTxForwarder {
+    pub fn spawn_new(
+        tpu_socket: UdpSocket,
+        tx_sender_client: Arc<dyn SendTransactionClient>,
+        identity_keypair: &Keypair,
+        cancel: CancellationToken,
+        num_threads: usize,
+    ) -> Self {
+        const RECEIVE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(30);
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let server = IrisQuicServer::spawn_new(
+            "iris_quic_forwarder_t",
+            tpu_socket,
+            sender,
+            identity_keypair,
+            cancel.clone(),
+            num_threads,
+        )
+        .unwrap();
+
+        let dedup = moka::sync::Cache::builder()
+            .name("quic_tx_forwarder_deduper")
+            .time_to_live(std::time::Duration::from_secs(60))
+            .max_capacity(500_000)
+            .build();
+
+        let forward_handle = std::thread::Builder::new()
+            .name("quic_forward_t".to_string())
+            .spawn(move || {
+                while !cancel.is_cancelled() {
+                    let packet_batch = match receiver.recv_timeout(RECEIVE_CHECK_TIMEOUT) {
+                        Ok(packets) => packets,
+                        Err(e) => match e {
+                            RecvTimeoutError::Timeout => continue,
+                            RecvTimeoutError::Disconnected => {
+                                break;
+                            }
+                        },
+                    };
+
+                    let tx_batch = packet_batch
+                        .iter()
+                        .map(|packet| packet.data(..).unwrap().to_vec())
+                        .filter(|data| {
+                            if dedup.contains_key(data) {
+                                counter!("iris_quic_forwarder_deduped").increment(1);
+                                false // Already seen so filter out
+                            } else {
+                                dedup.insert(data.clone(), ()); // Insert if not seen
+                                true
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    histogram!("iris_quic_forwarder_tx_batch_size").record(tx_batch.len() as f64);
+                    counter!("iris_quic_forwarder_txns_recieved").increment(tx_batch.len() as u64);
+
+                    tx_sender_client.send_transaction_batch(tx_batch, false);
+                }
+            })
+            .unwrap();
+
+        Self {
+            iris_quic_server: server,
+            forward_handle,
+        }
+    }
+
+    pub fn join(self) -> std::thread::Result<()> {
+        self.iris_quic_server.join()?;
+        self.forward_handle.join()
+    }
+}
