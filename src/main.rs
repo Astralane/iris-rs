@@ -62,7 +62,7 @@ pub struct Config {
     leaders_fanout: u64,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
-    retry_interval_seconds: u32,
+    tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
 }
 
@@ -140,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(tx_client),
         txn_store,
         chain_state,
-        Duration::from_secs(config.retry_interval_seconds as u64),
+        Duration::from_millis(config.tx_retry_interval_ms as u64),
         shutdown.clone(),
         config.tx_max_retries,
     );
