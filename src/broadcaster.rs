@@ -55,28 +55,25 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         // convert the bytes to a boolean
         let mev_protect = matches!(prefix_bytes.first(), Some(1));
         info!("mev protect: {:?}", mev_protect);
+
         let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
         let blocked_leaders = BLOCKED_LEADERS.load().clone();
+
+        //if the current or next leader is in the blocklist don't send the transactions
+        if mev_protect {
+            for index in 0..=1 {
+                if let Some(leader) = leaders.get(index) {
+                    if blocked_leaders.contains(leader) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         for (index, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;
-            }
-
-            // //check if the current or next leader is blocked
-            if mev_protect && blocked_leaders.contains(new_leader) {
-                debug!("Leader {new_leader:?} is blocked, skipping.");
-                continue;
-            }
-
-            let maybe_next_leader = leaders.get(index + 1);
-
-            if let Some(next_leader) = maybe_next_leader {
-                if mev_protect && blocked_leaders.contains(next_leader) {
-                    debug!("Next leader {next_leader:?} is blocked, skipping.");
-                    continue;
-                }
             }
 
             let send_res =
