@@ -61,11 +61,9 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
         //if the current or next leader is in the blocklist don't send the transactions
         if mev_protect {
-            for index in 0..=1 {
-                if let Some(leader) = leaders.get(index) {
-                    if blocked_leaders.contains(leader) {
-                        return Ok(());
-                    }
+            if let Some(leader) = leaders.first() {
+                if blocked_leaders.contains(leader) {
+                    return Ok(());
                 }
             }
         }
@@ -85,14 +83,14 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
                     debug!("Connection to {new_leader} was closed, worker cache shutdown");
                 }
                 Err(WorkersCacheError::ReceiverDropped) => {
-                    // Remove the worker from the cache, if the peer has disconnected.
+                    // Remove the worker from the cache if the peer has disconnected.
                     if let Some(pop_worker) = workers.pop(*new_leader) {
                         shutdown_worker(pop_worker)
                     }
                 }
                 Err(err) => {
                     warn!("Connection to {new_leader} was closed, worker error: {err}");
-                    // If we have failed to send batch, it will be dropped.
+                    // If we have failed to send a batch, it will be dropped.
                 }
             }
         }
