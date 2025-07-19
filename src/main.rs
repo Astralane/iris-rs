@@ -1,10 +1,11 @@
 #![warn(unused_crate_dependencies)]
-
 use crate::chain_state::ChainStateWsClient;
+use crate::otel_tracer::{
+    get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
+};
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::tpu_next_client::TpuClientNextSender;
-use crate::utils::{ChainStateClient, SendTransactionClient};
+use crate::utils::{ChainStateClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -16,7 +17,6 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
-use solana_sdk::signer::EncodableKey;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -28,10 +28,10 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
 mod chain_state;
+mod otel_tracer;
 mod rpc;
 mod rpc_server;
 mod shield;
@@ -64,6 +64,7 @@ pub struct Config {
     prometheus_addr: SocketAddr,
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
+    otpl_endpoint: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -77,18 +78,24 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
-    env_logger::init();
-    //setup tracing
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_env("RUST_LOG"))
-            .finish(),
-    )
-    .expect("Failed to set up tracing");
 
     //read config from env variables
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
     info!("config: {:?}", config);
+
+    match config.otpl_endpoint.clone() {
+        Some(endpoint) => {
+            let subscriber = get_subscriber_with_otpl(
+                "info".parse()?,
+                endpoint,
+                config.address.port().clone(),
+                std::io::stdout,
+            )
+            .await;
+            init_subscriber(subscriber)
+        }
+        None => init_subscriber_without_signoz(std::io::stdout),
+    }
 
     let identity_keypair = config
         .identity_keypair_file
