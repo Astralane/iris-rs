@@ -1,12 +1,11 @@
 #![warn(unused_crate_dependencies)]
-
 use crate::chain_state::ChainStateWsClient;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::utils::{ChainStateClient, SendTransactionClient};
+use crate::utils::{ChainStateClient};
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -18,7 +17,6 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
-use solana_sdk::signer::EncodableKey;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -30,7 +28,6 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
 mod chain_state;
