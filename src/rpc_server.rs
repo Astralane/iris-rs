@@ -103,11 +103,16 @@ impl IrisRpcServerImpl {
                     store.remove_transaction(signature);
                 }
 
-                info!("retrying {} transactions", to_retry.iter().len());
-                info!(
-                    "retrying {} mev protected transactions",
-                    to_retry_mev_protected.iter().len()
-                );
+                if !to_retry.is_empty() {
+                    info!("retrying {} tranasctions", to_retry.iter().len());
+                }
+
+                if !to_retry_mev_protected.is_empty() {
+                    info!(
+                        "retrying {} mev protected transactions",
+                        to_retry_mev_protected.iter().len()
+                    );
+                }
 
                 for batch in to_retry.chunks(10).clone() {
                     txn_sender.send_transaction_batch(batch.to_vec(), false);

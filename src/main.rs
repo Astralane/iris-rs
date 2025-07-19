@@ -6,7 +6,6 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::tpu_next_client::TpuClientNextSender;
 use crate::utils::{ChainStateClient, SendTransactionClient};
 use anyhow::anyhow;
 use figment::providers::Env;
