@@ -1,7 +1,7 @@
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX, MEV_PROTECT_TRUE_PREFIX};
 use futures_util::future::{Join, TryJoin};
-use metrics::counter;
+use metrics::{counter, gauge};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
@@ -10,9 +10,10 @@ use solana_tpu_client_next::connection_workers_scheduler::{
 };
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
-use solana_tpu_client_next::ConnectionWorkersScheduler;
+use solana_tpu_client_next::{ConnectionWorkersScheduler, SendTransactionStats};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{atomic, Arc};
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -28,6 +29,7 @@ pub fn spawn_tpu_client_send_txs(
     validator_identity: Keypair,
     rpc: Arc<RpcClient>,
     blocklist_key: Pubkey,
+    metrics_update_interval_secs: u64,
     cancel: CancellationToken,
 ) -> (
     TpuClientNextSender,
@@ -58,7 +60,10 @@ pub fn spawn_tpu_client_send_txs(
                 update_certificate_receiver,
                 cancel.clone(),
             );
-            let stats = scheduler.get_stats();
+            let metrics_handle = tokio::spawn(send_metrics_stats(
+                scheduler.get_stats().clone(),
+                metrics_update_interval_secs,
+            ));
             let _ = scheduler
                 .run_with_broadcaster::<MevProtectedBroadcaster>(config)
                 .await;
@@ -92,5 +97,83 @@ impl SendTransactionClient for TpuClientNextSender {
                 counter!("iris_error", "type" => "cannot_send_local").increment(1);
             }
         });
+    }
+}
+
+pub async fn send_metrics_stats(
+    stats: Arc<SendTransactionStats>,
+    metrics_update_interval_secs: u64,
+) {
+    let mut tick = tokio::time::interval(Duration::from_secs(metrics_update_interval_secs));
+    loop {
+        tick.tick().await;
+        gauge!("iris_tpu_client_next_successfully_sent")
+            .set(stats.successfully_sent.load(atomic::Ordering::Relaxed) as f64);
+        gauge!("iris_tpu_client_next_connect_error_cids_exhausted").set(
+            stats
+                .connect_error_cids_exhausted
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connect_error_invalid_remote_address").set(
+            stats
+                .connect_error_invalid_remote_address
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connect_error_other")
+            .set(stats.connect_error_other.load(atomic::Ordering::Relaxed) as f64);
+        gauge!("iris_tpu_client_next_connection_error_application_closed").set(
+            stats
+                .connection_error_application_closed
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_cids_exhausted").set(
+            stats
+                .connection_error_cids_exhausted
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_connection_closed").set(
+            stats
+                .connection_error_connection_closed
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_locally_closed").set(
+            stats
+                .connection_error_locally_closed
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_reset")
+            .set(stats.connection_error_reset.load(atomic::Ordering::Relaxed) as f64);
+        gauge!("iris_tpu_client_next_connection_error_timed_out").set(
+            stats
+                .connection_error_timed_out
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_transport_error").set(
+            stats
+                .connection_error_transport_error
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_connection_error_version_mismatch").set(
+            stats
+                .connection_error_version_mismatch
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_write_error_closed_stream").set(
+            stats
+                .write_error_closed_stream
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_write_error_connection_lost").set(
+            stats
+                .write_error_connection_lost
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_write_error_stopped")
+            .set(stats.write_error_stopped.load(atomic::Ordering::Relaxed) as f64);
+        gauge!("iris_tpu_client_next_write_error_zero_rtt_rejected").set(
+            stats
+                .write_error_zero_rtt_rejected
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
     }
 }
