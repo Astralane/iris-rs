@@ -65,6 +65,7 @@ pub struct Config {
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
+    rust_log: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -86,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     match config.otpl_endpoint.clone() {
         Some(endpoint) => {
             let subscriber = get_subscriber_with_otpl(
-                "info".parse()?,
+                config.rust_log.unwrap_or("info".to_string()),
                 endpoint,
                 config.address.port().clone(),
                 std::io::stdout,
