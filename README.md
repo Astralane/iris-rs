@@ -13,7 +13,7 @@ A fast and lightweight solana transaction sender, based on amazing previous work
 * TX_RETRY_INTERVAL_MS (**Renamed** from RETRY_INTERVAL_SECONDS)
 * SHIELD_POLICY_KEY(**ADDED**)
 
-**IRIS needs to be run with RUST_LOG="solana_tpu_client_next=info,iris_rpc=info,quinn=trace,quin_proto=trace"**
+**IRIS needs to be run with RUST_LOG="trace"**
 
 ### Summary of changes
 
