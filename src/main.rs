@@ -62,6 +62,7 @@ pub struct Config {
     leaders_fanout: u64,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
+    metrics_update_interval_secs: u64,
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
@@ -131,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
         identity_keypair,
         rpc.clone(),
         shield_policy_key,
+        config.metrics_update_interval_secs,
         cancel,
     );
     let ws_client = PubsubClient::new(&config.ws_url)
