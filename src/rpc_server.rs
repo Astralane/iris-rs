@@ -64,8 +64,9 @@ impl IrisRpcServerImpl {
                 }
 
                 let transactions_map = store.get_transactions();
-                let mut transactions_to_remove = vec![];
-                let mut transactions_to_send = vec![];
+                let mut to_remove = vec![];
+                let mut to_retry = vec![];
+                let mut to_retry_mev_protected = vec![];
                 gauge!("iris_retry_transactions").set(transactions_map.len() as f64);
 
                 for mut txn in transactions_map.iter_mut() {
@@ -77,33 +78,47 @@ impl IrisRpcServerImpl {
                         counter!("iris_txn_landed").increment(1);
                         histogram!("iris_txn_slot_latency")
                             .record(slot.saturating_sub(txn.slot) as f64);
-                        transactions_to_remove.push(txn.key().clone());
+                        to_remove.push(txn.key().clone());
                     }
                     //check if transaction has been in the store for too long
                     if txn.value().sent_at.elapsed() > Duration::from_secs(60) {
-                        transactions_to_remove.push(txn.key().clone());
+                        to_remove.push(txn.key().clone());
                     }
                     //check if max retries has been reached
                     if txn.retry_count == 0usize {
-                        transactions_to_remove.push(txn.key().clone());
+                        to_remove.push(txn.key().clone());
                     }
                     if txn.retry_count > 0usize {
-                        transactions_to_send.push(txn.wire_transaction.clone());
+                        if !txn.mev_protect {
+                            to_retry.push(txn.wire_transaction.clone());
+                        } else {
+                            to_retry_mev_protected.push(txn.wire_transaction.clone());
+                        }
                     }
                     txn.retry_count = txn.retry_count.saturating_sub(1);
                 }
 
-                gauge!("iris_transactions_removed").increment(transactions_to_remove.len() as f64);
-                for signature in transactions_to_remove {
+                gauge!("iris_transactions_removed").increment(to_remove.len() as f64);
+                for signature in to_remove {
                     store.remove_transaction(signature);
                 }
 
-                info!(
-                    "retrying {} transactions",
-                    transactions_to_send.iter().len()
-                );
-                for batches in transactions_to_send.chunks(10) {
-                    txn_sender.send_transaction_batch(batches.to_vec());
+                if !to_retry.is_empty() {
+                    info!("retrying {} tranasctions", to_retry.iter().len());
+                }
+
+                if !to_retry_mev_protected.is_empty() {
+                    info!(
+                        "retrying {} mev protected transactions",
+                        to_retry_mev_protected.iter().len()
+                    );
+                }
+
+                for batch in to_retry.chunks(10).clone() {
+                    txn_sender.send_transaction_batch(batch.to_vec(), false);
+                }
+                for batch in to_retry_mev_protected.chunks(10).clone() {
+                    txn_sender.send_transaction_batch(batch.to_vec(), true);
                 }
 
                 tokio::time::sleep(retry_interval).await;
@@ -121,6 +136,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         &self,
         txn: String,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
         if self.store.has_signature(&txn) {
@@ -128,6 +144,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
             return Err(invalid_request("duplicate transaction"));
         }
         counter!("iris_txn_total_transactions").increment(1);
+        let mev_protect = mev_protect.unwrap_or(false);
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
         if !params.skip_preflight {
             counter!("iris_error", "type" => "preflight_check").increment(1);
@@ -157,11 +174,12 @@ impl IrisRpcServer for IrisRpcServerImpl {
             versioned_transaction,
             slot,
             params.max_retries.unwrap_or(self.max_retries as usize),
+            mev_protect,
         );
         // add to store
         self.store.add_transaction(transaction.clone());
         self.txn_sender
-            .send_transaction(transaction.wire_transaction);
+            .send_transaction(transaction.wire_transaction, mev_protect);
         Ok(signature)
     }
 
@@ -169,7 +187,9 @@ impl IrisRpcServer for IrisRpcServerImpl {
         &self,
         batch: Vec<String>,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>> {
+        let mev_protect = mev_protect.unwrap_or(false);
         if batch.len() > 10 {
             counter!("iris_error", "type" => "batch_size_exceeded").increment(1);
             return Err(invalid_request("batch size exceeded"));
@@ -210,13 +230,15 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 versioned_transaction,
                 slot,
                 params.max_retries.unwrap_or(self.max_retries as usize),
+                mev_protect,
             );
             // add to store
             self.store.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);
             signatures.push(signature);
         }
-        self.txn_sender.send_transaction_batch(wired_transactions);
+        self.txn_sender
+            .send_transaction_batch(wired_transactions, mev_protect);
         Ok(signatures)
     }
 }

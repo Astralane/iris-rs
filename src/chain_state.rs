@@ -21,9 +21,7 @@ use tracing::{debug, info};
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBlocks};
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
-use yellowstone_grpc_proto::prelude::{
-    SubscribeRequest, SubscribeRequestPing,
-};
+use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
@@ -229,7 +227,8 @@ fn spawn_grpc_block_listener(
                 continue;
             }
 
-            let client = client.unwrap()
+            let client = client
+                .unwrap()
                 .max_encoding_message_size(64 * 1024 * 1024)
                 .max_decoding_message_size(64 * 1024 * 1024);
 
@@ -254,7 +253,9 @@ fn spawn_grpc_block_listener(
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
-            'event_loop: while let Ok(Some(update)) = timeout(Duration::from_secs(60), grpc_rx.next()).await {
+            'event_loop: while let Ok(Some(update)) =
+                timeout(Duration::from_secs(60), grpc_rx.next()).await
+            {
                 retries = 0;
                 if shutdown.load(Ordering::Relaxed) {
                     return;

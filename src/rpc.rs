@@ -11,6 +11,7 @@ pub trait IrisRpc {
         &self,
         txn: String,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<String>;
 
     #[method(name = "sendTransactionBatch")]
@@ -18,5 +19,6 @@ pub trait IrisRpc {
         &self,
         txns: Vec<String>,
         params: RpcSendTransactionConfig,
+        mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>>;
 }
