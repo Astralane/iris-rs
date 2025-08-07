@@ -8,7 +8,7 @@ A fast and lightweight solana transaction sender, based on amazing previous work
 * USE_TPU_CLIENT_NEXT( **REMOVED** )
 * TX_MAX_RETRIES (**Renamed** from MAX_RETRIES)
 * METRICS_UPDATE_INTERVAL_SECS  (**ADDED**)
-* LEADER_FANOUT (**ADDED**)
+* LEADERS_FANOUT (**ADDED**)
 * OTPL_ENDPOINT (**ADDED**)
 * TX_RETRY_INTERVAL_MS (**Renamed** from RETRY_INTERVAL_SECONDS)
 * SHIELD_POLICY_KEY(**ADDED**)
