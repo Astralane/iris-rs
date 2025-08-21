@@ -4,6 +4,7 @@ use futures_util::{SinkExt, StreamExt};
 use log::error;
 use metrics::gauge;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
+use solana_client::rpc_response::{Response, RpcBlockUpdate};
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -25,6 +26,7 @@ use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
 const RETRY_INTERVAL: u64 = 1000;
 const MAX_RETRIES: usize = 5;
+const TIMEOUT: Duration = Duration::from_secs(25);
 
 macro_rules! ping_request {
     () => {
@@ -137,12 +139,18 @@ fn spawn_ws_block_listener(
             .await
         {
             Ok((mut stream, unsub)) => {
-                while let Some(block) = stream.next().await {
-                    debug!("Block update");
-                    gauge!("iris_current_block").set(block.value.slot as f64);
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
+                while !shutdown.load(Ordering::Relaxed) {
+                    let block = match timeout(TIMEOUT, stream.next()).await {
+                        Ok(Some(block)) => block,
+                        Ok(None) => {
+                            error!("block updates ended!");
+                            break;
+                        }
+                        Err(_) => {
+                            error!("Timeout waiting for block update");
+                            break;
+                        }
+                    };
                     let block_update = block.value;
                     if let Some(block) = block_update.block {
                         let slot = block_update.slot;
@@ -158,7 +166,6 @@ fn spawn_ws_block_listener(
                         gauge!("iris_signature_store_size").set(signature_store.len() as f64);
                     }
                 }
-                error!("Block stream ended unexpectedly!!");
                 drop(stream);
                 unsub().await;
                 //critical error
@@ -182,10 +189,18 @@ fn spawn_ws_slot_listener(
     runtime.spawn(async move {
         let subscription = ws_client.slot_updates_subscribe().await.unwrap();
         let (mut stream, unsub) = subscription;
-        while let Some(slot_update) = stream.next().await {
-            if shutdown.load(Ordering::Relaxed) {
-                break;
-            }
+        while !shutdown.load(Ordering::Relaxed) {
+            let slot_update = match timeout(TIMEOUT, stream.next()).await {
+                Ok(Some(update)) => update,
+                Ok(None) => {
+                    error!("slot updates ended");
+                    break;
+                }
+                Err(_) => {
+                    error!("Timeout waiting for slot update");
+                    break;
+                }
+            };
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
@@ -193,7 +208,7 @@ fn spawn_ws_slot_listener(
             };
             debug!("Slot update: {}", slot);
             gauge!("iris_current_slot").set(slot as f64);
-            current_slot.store(slot, Ordering::SeqCst);
+            current_slot.store(slot, Ordering::Relaxed);
         }
         error!("Slot stream ended unexpectedly!!");
         drop(stream);
@@ -211,10 +226,10 @@ fn spawn_grpc_block_listener(
 ) -> JoinHandle<()> {
     let max_retries = 10;
     runtime.spawn(async move {
-        let mut retries = 0;
-        loop {
-            retries += 1;
-            if retries > max_retries {
+        let mut connection_retries = 0;
+        while !shutdown.load(Ordering::Relaxed) {
+            connection_retries += 1;
+            if connection_retries > max_retries {
                 error!("Max retries reached, shutting down geyser grpc block listener");
                 shutdown.store(true, Ordering::Relaxed);
                 return;
@@ -232,34 +247,44 @@ fn spawn_grpc_block_listener(
                 .max_encoding_message_size(64 * 1024 * 1024)
                 .max_decoding_message_size(64 * 1024 * 1024);
 
-            let connection = client.connect().await;
-            if let Err(e) = connection {
-                error!("Error connecting to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
+            let mut connection = match client.connect().await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    error!("Error connecting to geyser grpc: {:?}", e);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
 
-            let subscription = connection.unwrap().subscribe().await;
-            if let Err(e) = subscription {
-                error!("Error subscribing to geyser grpc: {:?}", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
+            let subscription = match connection.subscribe().await {
+                Ok(subscription) => subscription,
+                Err(e) => {
+                    error!("Error subscribing to geyser grpc: {:?}", e);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
 
-            let (mut grpc_tx, mut grpc_rx) = subscription.unwrap();
+            let (mut grpc_tx, mut grpc_rx) = subscription;
             info!("Subscribing to grpc block updates..");
             if let Err(e) = grpc_tx.send(block_subscribe_request!()).await {
                 error!("Error sending subscription request: {:?}", e);
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
-            'event_loop: while let Ok(Some(update)) =
-                timeout(Duration::from_secs(60), grpc_rx.next()).await
-            {
-                retries = 0;
-                if shutdown.load(Ordering::Relaxed) {
-                    return;
-                }
+            connection_retries = 0;
+            while !shutdown.load(Ordering::Relaxed) {
+                let update = match timeout(TIMEOUT, grpc_rx.next()).await {
+                    Ok(Some(update)) => update,
+                    Ok(None) => {
+                        error!("grpc block updates ended");
+                        break;
+                    }
+                    Err(_) => {
+                        error!("Timeout waiting for grpc block update");
+                        break;
+                    }
+                };
                 match update {
                     Ok(message) => match message.update_oneof {
                         Some(UpdateOneof::Block(block)) => {
@@ -277,7 +302,7 @@ fn spawn_grpc_block_listener(
                         Some(UpdateOneof::Ping(_)) => {
                             if let Err(e) = grpc_tx.send(ping_request!()).await {
                                 error!("Error sending ping: {}", e);
-                                break 'event_loop;
+                                break;
                             }
                         }
                         Some(UpdateOneof::Pong(_)) => {}
@@ -288,7 +313,7 @@ fn spawn_grpc_block_listener(
                     Err(e) => {
                         error!("Error block updates subscription {:?}", e);
                         tokio::time::sleep(Duration::from_secs(2)).await;
-                        break 'event_loop;
+                        break;
                     }
                 }
             }

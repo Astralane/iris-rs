@@ -1,5 +1,4 @@
 use anyhow::Context;
-use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;

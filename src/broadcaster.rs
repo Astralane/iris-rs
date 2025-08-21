@@ -68,7 +68,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
             }
         }
 
-        for (index, new_leader) in leaders.iter().enumerate() {
+        for (_, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;

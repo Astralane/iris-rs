@@ -69,10 +69,6 @@ pub struct Config {
     rust_log: Option<String>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
@@ -126,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
-    let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
+    let (tx_client, _tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
         config.leaders_fanout,
         identity_keypair,
@@ -139,17 +135,18 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to websocket");
 
-    let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
+    let chain_state = ChainStateWsClient::new(
         Handle::current(),
         shutdown.clone(),
         800, // around 4 mins
         Arc::new(ws_client),
         config.grpc_url,
-    ));
+    );
+
     let iris = IrisRpcServerImpl::new(
         Arc::new(tx_client),
         txn_store,
-        chain_state,
+        Arc::new(chain_state),
         Duration::from_millis(config.tx_retry_interval_ms as u64),
         shutdown.clone(),
         config.tx_max_retries,
@@ -163,8 +160,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
-
-    tpu_client_jh.await.expect("tpu client join handle failed");
+    while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     server_hdl.stop()?;
     server_hdl.stopped().await;
     process::exit(1);
