@@ -160,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
+    // if the solana rpc server connection is lost, the server will exit
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
