@@ -5,7 +5,7 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::utils::{ChainStateClient};
+use crate::utils::ChainStateClient;
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.ok())
         .expect("Failed to parse shield policy key");
 
-    let _metrics = PrometheusBuilder::new()
+    PrometheusBuilder::new()
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
@@ -122,14 +122,14 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
 
-    let (tx_client, _tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
+    let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
         config.leaders_fanout,
         identity_keypair,
         rpc.clone(),
         shield_policy_key,
         config.metrics_update_interval_secs,
-        cancel,
+        cancel.clone(),
     );
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
@@ -164,7 +164,9 @@ async fn main() -> anyhow::Result<()> {
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+    cancel.cancel();
     server_hdl.stop()?;
     server_hdl.stopped().await;
+    tpu_client_jh.await.expect("failed to join tpu client");
     process::exit(1);
 }
