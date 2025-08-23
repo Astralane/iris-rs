@@ -201,6 +201,7 @@ fn spawn_ws_slot_listener(
                     break;
                 }
             };
+            info!("Slot update: {:?}", slot_update);
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
