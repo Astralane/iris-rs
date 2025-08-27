@@ -44,7 +44,7 @@ opentelemetry_sdk = "0.30.0"
 opentelemetry-appender-tracing = "0.30.1"
 tracing-log = "0.2.0"
 reqwest = "0.12.19"
-
+lru = "0.16.0"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
