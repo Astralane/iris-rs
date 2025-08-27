@@ -139,10 +139,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
         mev_protect: Option<bool>,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
-        if self.store.has_signature(&txn) {
-            counter!("iris_error", "type" => "duplicate_transaction").increment(1);
-            return Err(invalid_request("duplicate transaction"));
-        }
         counter!("iris_txn_total_transactions").increment(1);
         let mev_protect = mev_protect.unwrap_or(false);
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
@@ -167,6 +163,10 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 }
             };
         let signature = versioned_transaction.get_signature().to_string();
+        if self.store.has_signature(&signature) {
+            counter!("iris_error", "type" => "duplicate_transaction").increment(1);
+            return Err(invalid_request("duplicate transaction"));
+        }
         info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
         let transaction = TransactionData::new(
