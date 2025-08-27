@@ -1,8 +1,7 @@
 use crate::shield::YellowstoneShieldProvider;
-use crate::utils::MEV_PROTECT_TRUE_PREFIX;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use once_cell::sync::Lazy;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;

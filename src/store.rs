@@ -35,7 +35,6 @@ impl TransactionData {
 
 pub trait TransactionStore: Send + Sync {
     fn add_transaction(&self, transaction: TransactionData);
-    fn get_signatures(&self) -> Vec<String>;
     fn remove_transaction(&self, signature: String) -> Option<TransactionData>;
     fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>>;
     fn has_signature(&self, signature: &str) -> bool;
@@ -65,14 +64,7 @@ impl TransactionStore for TransactionStoreImpl {
             error!("Transaction has no signatures");
         }
     }
-    fn get_signatures(&self) -> Vec<String> {
-        let signatures = self
-            .transactions
-            .iter()
-            .map(|t| get_signature(&t).unwrap())
-            .collect();
-        signatures
-    }
+
     fn remove_transaction(&self, signature: String) -> Option<TransactionData> {
         let transaction = self.transactions.remove(&signature);
         transaction.map_or(None, |t| Some(t.1))

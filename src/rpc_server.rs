@@ -168,8 +168,11 @@ impl IrisRpcServer for IrisRpcServerImpl {
                     return Err(invalid_request(&e.to_string()));
                 }
             };
-        let signature = versioned_transaction.get_signature();
-        if self.dedup_cache.contains(&signature) {
+        let signature = versioned_transaction.get_signature().to_string();
+        if self
+            .dedup_cache
+            .contains(versioned_transaction.get_signature())
+        {
             counter!("iris_error", "type" => "duplicate_transaction").increment(1);
             return Err(invalid_request("duplicate transaction"));
         }

@@ -67,6 +67,7 @@ pub struct Config {
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
     dedup_cache_max_size: usize,
+    rust_log: Option<String>,
 }
 
 fn default_true() -> bool {

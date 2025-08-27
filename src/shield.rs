@@ -1,5 +1,4 @@
 use anyhow::Context;
-use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -153,7 +152,7 @@ pub mod test {
     use solana_client::nonblocking::rpc_client::RpcClient;
     use std::str::FromStr;
     use std::sync::Arc;
-    use std::time::Duration;
+    
 
     #[tokio::test]
     pub async fn test_get_identities_for_key() {
