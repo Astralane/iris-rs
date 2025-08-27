@@ -5,7 +5,7 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::utils::{ChainStateClient};
+use crate::utils::ChainStateClient;
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
@@ -66,7 +66,7 @@ pub struct Config {
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
-    rust_log: Option<String>,
+    dedup_cache_max_size: usize,
 }
 
 fn default_true() -> bool {
@@ -133,6 +133,8 @@ async fn main() -> anyhow::Result<()> {
         rpc.clone(),
         shield_policy_key,
         config.metrics_update_interval_secs,
+        config.worker_channel_size,
+        config.max_reconnect_attempts,
         cancel,
     );
     let ws_client = PubsubClient::new(&config.ws_url)
@@ -153,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_millis(config.tx_retry_interval_ms as u64),
         shutdown.clone(),
         config.tx_max_retries,
+        config.dedup_cache_max_size,
     );
 
     let server = ServerBuilder::default()

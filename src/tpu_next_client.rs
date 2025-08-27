@@ -30,6 +30,8 @@ pub fn spawn_tpu_client_send_txs(
     rpc: Arc<RpcClient>,
     blocklist_key: Pubkey,
     metrics_update_interval_secs: u64,
+    worker_channel_size: usize,
+    max_reconnect_attempts: usize,
     cancel: CancellationToken,
 ) -> (
     TpuClientNextSender,
@@ -47,10 +49,10 @@ pub fn spawn_tpu_client_send_txs(
                 // to match MAX_CONNECTIONS from ConnectionCache
                 num_connections: 1024,
                 skip_check_transaction_age: true,
-                worker_channel_size: 128,
-                max_reconnect_attempts: 4,
+                worker_channel_size,
+                max_reconnect_attempts,
                 leaders_fanout: Fanout {
-                    connect: leader_forward_count as usize,
+                    connect: leader_forward_count as usize + 1,
                     send: leader_forward_count as usize,
                 },
             };
