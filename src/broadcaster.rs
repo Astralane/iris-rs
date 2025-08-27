@@ -54,8 +54,6 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         };
         // convert the bytes to a boolean
         let mev_protect = matches!(prefix_bytes.first(), Some(1));
-        info!("mev protect: {:?}", mev_protect);
-
         let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
         let blocked_leaders = BLOCKED_LEADERS.load().clone();
 
