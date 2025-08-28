@@ -20,4 +20,4 @@ A fast and lightweight solana transaction sender, based on amazing previous work
 
 * otpl is used to send logs to us , in order to do analysis and debug issues on iris which include leaders iris cannot connect to (endpoint will be provided)
 * metrics update interval secs is how fast you update metrics, 1 second is good for this
-* added an mev protect feature to prevent users from sending transactions to malicious leaders we are using the following contract address from yellow stone 8LXyNpkdnCKCCaUWBku1wD2B1HHaZ41FRgFEN6jNmytv
+* added an mev protect feature to prevent users from sending transactions to malicious leaders we are using the following contract address from yellow stone 4QXuzwHutRGjMHRfpGgZpaC9LEYR2wqVmLJBbPbK1zQo
