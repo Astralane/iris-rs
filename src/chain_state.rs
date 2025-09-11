@@ -139,10 +139,12 @@ fn spawn_ws_block_listener(
                         Ok(Some(block)) => block,
                         Ok(None) => {
                             error!("block updates ended!");
+                            shutdown.store(true, Ordering::Relaxed);
                             break;
                         }
                         Err(_) => {
                             error!("Timeout waiting for block update");
+                            shutdown.store(true, Ordering::Relaxed);
                             break;
                         }
                     };
@@ -163,8 +165,6 @@ fn spawn_ws_block_listener(
                 }
                 drop(stream);
                 unsub().await;
-                //critical error
-                shutdown.store(true, Ordering::Relaxed);
             }
             Err(e) => {
                 error!("Error subscribing to block updates {:?}", e);
@@ -189,10 +189,12 @@ fn spawn_ws_slot_listener(
                 Ok(Some(update)) => update,
                 Ok(None) => {
                     error!("slot updates ended");
+                    shutdown.store(true, Ordering::Relaxed);
                     break;
                 }
                 Err(_) => {
                     error!("Timeout waiting for slot update");
+                    shutdown.store(true, Ordering::Relaxed);
                     break;
                 }
             };
@@ -209,7 +211,6 @@ fn spawn_ws_slot_listener(
         error!("Slot stream ended unexpectedly!!");
         drop(stream);
         unsub().await;
-        shutdown.store(true, Ordering::Relaxed);
     })
 }
 
@@ -220,7 +221,7 @@ fn spawn_grpc_block_listener(
     retain_slot_count: u64,
     endpoint: String,
 ) -> JoinHandle<()> {
-    let max_retries = 10;
+    let max_retries = 5;
     runtime.spawn(async move {
         let mut connection_retries = 0;
         while !shutdown.load(Ordering::Relaxed) {
