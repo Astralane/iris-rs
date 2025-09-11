@@ -9,7 +9,10 @@ solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "maste
 solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 solana-rpc-client-api = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 
-solana-sdk = "~2.3.0"
+solana-sdk = "3.0.0"
+solana-commitment-config = "3.0.0"
+solana-packet = "3.0.0"
+
 yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v8.0.0+solana.2.3.3" }
 yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v8.0.0+solana.2.3.3", default-features = false }
 

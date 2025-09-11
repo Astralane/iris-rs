@@ -7,7 +7,6 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::rpc_response::{Response, RpcBlockUpdate};
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::Signature;
 use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
@@ -127,7 +126,7 @@ fn spawn_ws_block_listener(
 ) -> JoinHandle<()> {
     runtime.spawn(async move {
         let config = Some(RpcBlockSubscribeConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
+            commitment: Some(solana_commitment_config::CommitmentConfig::confirmed()),
             encoding: Some(Base64),
             transaction_details: Some(Signatures),
             show_rewards: Some(false),

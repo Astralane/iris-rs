@@ -1,6 +1,6 @@
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX, MEV_PROTECT_TRUE_PREFIX};
-use futures_util::future::{TryJoin};
+use futures_util::future::TryJoin;
 use metrics::{counter, gauge};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
