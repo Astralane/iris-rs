@@ -1,8 +1,7 @@
 use crate::shield::YellowstoneShieldProvider;
-use crate::utils::MEV_PROTECT_TRUE_PREFIX;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use once_cell::sync::Lazy;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -54,8 +53,6 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         };
         // convert the bytes to a boolean
         let mev_protect = matches!(prefix_bytes.first(), Some(1));
-        info!("mev protect: {:?}", mev_protect);
-
         let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
         let blocked_leaders = BLOCKED_LEADERS.load().clone();
 
