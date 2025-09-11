@@ -1,19 +1,18 @@
 use crate::rpc::IrisRpcServer;
-use crate::store::{TransactionData, TransactionStore};
+use crate::store::{TransactionContext, TransactionStore};
 use crate::utils::{ChainStateClient, SendTransactionClient};
-use crate::vendor::solana_rpc::decode_and_deserialize;
+use crate::vendor::solana_rpc::decode_transaction;
+use agave_transaction_view::transaction_view::TransactionView;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
-use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
-use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
+use tracing::{error, info};
 
 pub struct IrisRpcServerImpl {
     txn_sender: Arc<dyn SendTransactionClient>,
@@ -156,22 +155,26 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 "unsupported encoding: {encoding}. Supported encodings: base58, base64"
             ))
         })?;
-        let (wire_transaction, versioned_transaction) =
-            match decode_and_deserialize::<VersionedTransaction>(txn, binary_encoding) {
-                Ok((wire_transaction, versioned_transaction)) => {
-                    (wire_transaction, versioned_transaction)
-                }
-                Err(e) => {
-                    counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
-                    return Err(invalid_request(&e.to_string()));
-                }
-            };
-        let signature = versioned_transaction.get_signature().to_string();
+        let wire_transaction = match decode_transaction(txn, binary_encoding) {
+            Ok(wire_transaction) => wire_transaction,
+            Err(e) => {
+                counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
+                error!("cannot decode transaction: {:?}", e);
+                return Err(invalid_request(&e.to_string()));
+            }
+        };
+        let tx_view =
+            TransactionView::try_new_unsanitized(wire_transaction.as_ref()).map_err(|e| {
+                counter!("iris_error", "type" => "cannot_deserialize_transaction").increment(1);
+                error!("cannot deserialize transaction: {:?}", e);
+                invalid_request("cannot deserialize transaction")
+            })?;
+        let signature = tx_view.signatures()[0].clone();
         info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
-        let transaction = TransactionData::new(
+        let transaction = TransactionContext::new(
             wire_transaction,
-            versioned_transaction,
+            signature,
             slot,
             params.max_retries.unwrap_or(self.max_retries as usize),
             mev_protect,
@@ -180,7 +183,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         self.store.add_transaction(transaction.clone());
         self.txn_sender
             .send_transaction(transaction.wire_transaction, mev_protect);
-        Ok(signature)
+        Ok(signature.to_string())
     }
 
     async fn send_transaction_batch(
@@ -213,21 +216,26 @@ impl IrisRpcServer for IrisRpcServerImpl {
                     "unsupported encoding: {encoding}. Supported encodings: base58, base64"
                 ))
             })?;
-            let (wire_transaction, versioned_transaction) =
-                match decode_and_deserialize::<VersionedTransaction>(txn, binary_encoding) {
-                    Ok((wire_transaction, versioned_transaction)) => {
-                        (wire_transaction, versioned_transaction)
-                    }
-                    Err(e) => {
-                        counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
-                        return Err(invalid_request(&e.to_string()));
-                    }
-                };
-            let signature = versioned_transaction.get_signature().to_string();
+            let wire_transaction = match decode_transaction(txn, binary_encoding) {
+                Ok(wire_transaction) => wire_transaction,
+                Err(e) => {
+                    counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
+                    error!("cannot decode transaction: {:?}", e);
+                    return Err(invalid_request("cannot decode transaction"));
+                }
+            };
+            let tx_view =
+                TransactionView::try_new_unsanitized(wire_transaction.as_ref()).map_err(|e| {
+                    counter!("iris_error", "type" => "cannot_deserialize_transaction").increment(1);
+                    error!("cannot deserialize transaction: {:?}", e);
+                    invalid_request("cannot deserialize transaction")
+                })?;
+
+            let signature = tx_view.signatures()[0].clone();
             let slot = self.chain_state.get_slot();
-            let transaction = TransactionData::new(
+            let transaction = TransactionContext::new(
                 wire_transaction,
-                versioned_transaction,
+                signature,
                 slot,
                 params.max_retries.unwrap_or(self.max_retries as usize),
                 mev_protect,
@@ -235,7 +243,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
             // add to store
             self.store.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);
-            signatures.push(signature);
+            signatures.push(signature.to_string());
         }
         self.txn_sender
             .send_transaction_batch(wired_transactions, mev_protect);

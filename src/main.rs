@@ -5,7 +5,6 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::utils::ChainStateClient;
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
