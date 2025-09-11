@@ -3,12 +3,19 @@ use crate::store::{TransactionContext, TransactionStore};
 use crate::utils::{ChainStateClient, SendTransactionClient};
 use crate::vendor::solana_rpc::decode_transaction;
 use agave_transaction_view::transaction_view::TransactionView;
+use dashmap::DashMap;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
+use moka::future::{Cache, CacheBuilder};
+use moka::policy::EvictionPolicy;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
+use solana_sdk::signature::Signature;
+use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
+use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +23,9 @@ use tracing::{error, info};
 
 pub struct IrisRpcServerImpl {
     txn_sender: Arc<dyn SendTransactionClient>,
-    store: Arc<dyn TransactionStore>,
+    retry_cache: Arc<dyn TransactionStore>,
     chain_state: Arc<dyn ChainStateClient>,
+    dedup_cache: Cache<Signature, ()>,
     retry_interval: Duration,
     max_retries: u32,
 }
@@ -38,11 +46,15 @@ impl IrisRpcServerImpl {
         retry_interval: Duration,
         shutdown: Arc<AtomicBool>,
         max_retries: u32,
+        dedup_cache_size: usize,
     ) -> Self {
         let client = IrisRpcServerImpl {
             txn_sender,
-            store,
+            retry_cache: store,
             chain_state,
+            dedup_cache: CacheBuilder::new(dedup_cache_size as u64)
+                .eviction_policy(EvictionPolicy::lru())
+                .build(),
             retry_interval,
             max_retries,
         };
@@ -51,7 +63,7 @@ impl IrisRpcServerImpl {
     }
 
     fn spawn_retry_transactions_loop(&self, shutdown: Arc<AtomicBool>) {
-        let store = self.store.clone();
+        let store = self.retry_cache.clone();
         let chain_state = self.chain_state.clone();
         let txn_sender = self.txn_sender.clone();
         let retry_interval = self.retry_interval;
@@ -138,10 +150,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
         mev_protect: Option<bool>,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
-        if self.store.has_signature(&txn) {
-            counter!("iris_error", "type" => "duplicate_transaction").increment(1);
-            return Err(invalid_request("duplicate transaction"));
-        }
         counter!("iris_txn_total_transactions").increment(1);
         let mev_protect = mev_protect.unwrap_or(false);
         let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
@@ -170,6 +178,10 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 invalid_request("cannot deserialize transaction")
             })?;
         let signature = tx_view.signatures()[0].clone();
+        if self.dedup_cache.contains_key(&signature) {
+            counter!("iris_error", "type" => "duplicate_transaction").increment(1);
+            return Err(invalid_request("duplicate transaction"));
+        }
         info!("processing transaction with signature: {signature}");
         let slot = self.chain_state.get_slot();
         let transaction = TransactionContext::new(
@@ -180,7 +192,8 @@ impl IrisRpcServer for IrisRpcServerImpl {
             mev_protect,
         );
         // add to store
-        self.store.add_transaction(transaction.clone());
+        self.retry_cache.add_transaction(transaction.clone());
+        self.dedup_cache.insert(signature, ()).await;
         self.txn_sender
             .send_transaction(transaction.wire_transaction, mev_protect);
         Ok(signature.to_string())
@@ -201,7 +214,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         let mut wired_transactions = Vec::new();
         let mut signatures = Vec::new();
         for txn in batch {
-            if self.store.has_signature(&txn) {
+            if self.retry_cache.has_signature(&txn) {
                 counter!("iris_error", "type" => "duplicate_transaction_in_batch").increment(1);
                 return Err(invalid_request("duplicate transaction"));
             }
@@ -241,7 +254,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 mev_protect,
             );
             // add to store
-            self.store.add_transaction(transaction.clone());
+            self.retry_cache.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);
             signatures.push(signature.to_string());
         }

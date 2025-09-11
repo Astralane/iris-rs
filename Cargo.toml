@@ -45,7 +45,7 @@ opentelemetry_sdk = "0.30.0"
 opentelemetry-appender-tracing = "0.30.1"
 tracing-log = "0.2.0"
 reqwest = "0.12.19"
-
+moka = { version = "0.12.10", features = ["future"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
