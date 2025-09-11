@@ -10,7 +10,7 @@ use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, Worke
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 static BLOCKED_LEADERS: Lazy<ArcSwap<Vec<SocketAddr>>> =
     Lazy::new(|| ArcSwap::from_pointee(vec![]));

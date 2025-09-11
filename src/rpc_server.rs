@@ -3,19 +3,15 @@ use crate::store::{TransactionContext, TransactionStore};
 use crate::utils::{ChainStateClient, SendTransactionClient};
 use crate::vendor::solana_rpc::decode_transaction;
 use agave_transaction_view::transaction_view::TransactionView;
-use dashmap::DashMap;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
 use metrics::{counter, gauge, histogram};
 use moka::future::{Cache, CacheBuilder};
 use moka::policy::EvictionPolicy;
-use solana_client::rpc_client::SerializableTransaction;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_sdk::signature::Signature;
-use solana_sdk::transaction::VersionedTransaction;
 use solana_transaction_status::UiTransactionEncoding;
-use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -245,6 +241,10 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 })?;
 
             let signature = tx_view.signatures()[0].clone();
+            if self.dedup_cache.contains_key(&signature) {
+                counter!("iris_error", "type" => "duplicate_transaction").increment(1);
+                return Err(invalid_request("duplicate transaction"));
+            }
             let slot = self.chain_state.get_slot();
             let transaction = TransactionContext::new(
                 wire_transaction,
@@ -254,6 +254,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 mev_protect,
             );
             // add to store
+            self.dedup_cache.insert(signature, ()).await;
             self.retry_cache.add_transaction(transaction.clone());
             wired_transactions.push(transaction.wire_transaction);
             signatures.push(signature.to_string());
