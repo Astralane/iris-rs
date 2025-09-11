@@ -1,6 +1,6 @@
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX, MEV_PROTECT_TRUE_PREFIX};
-use futures_util::future::TryJoin;
+use futures_util::future::{TryJoin};
 use metrics::{counter, gauge};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -60,7 +60,7 @@ pub fn spawn_tpu_client_send_txs(
                 update_certificate_receiver,
                 cancel.clone(),
             );
-            let metrics_handle = tokio::spawn(send_metrics_stats(
+            let _metrics_handle = tokio::spawn(send_metrics_stats(
                 scheduler.get_stats().clone(),
                 metrics_update_interval_secs,
             ));

@@ -70,10 +70,6 @@ pub struct Config {
     rust_log: Option<String>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
@@ -112,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.ok())
         .expect("Failed to parse shield policy key");
 
-    let _metrics = PrometheusBuilder::new()
+    PrometheusBuilder::new()
         .with_http_listener(config.prometheus_addr)
         .install()
         .expect("failed to install recorder/exporter");
@@ -136,23 +132,24 @@ async fn main() -> anyhow::Result<()> {
         config.metrics_update_interval_secs,
         config.worker_channel_size,
         config.max_reconnect_attempts,
-        cancel,
+        cancel.clone(),
     );
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
         .expect("Failed to connect to websocket");
 
-    let chain_state: Arc<dyn ChainStateClient> = Arc::new(ChainStateWsClient::new(
+    let chain_state = ChainStateWsClient::new(
         Handle::current(),
         shutdown.clone(),
         800, // around 4 mins
         Arc::new(ws_client),
         config.grpc_url,
-    ));
+    );
+
     let iris = IrisRpcServerImpl::new(
         Arc::new(tx_client),
         txn_store,
-        chain_state,
+        Arc::new(chain_state),
         Duration::from_millis(config.tx_retry_interval_ms as u64),
         shutdown.clone(),
         config.tx_max_retries,
@@ -167,9 +164,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let server_hdl = server.start(iris.into_rpc());
-
-    tpu_client_jh.await.expect("tpu client join handle failed");
+    // if the solana rpc server connection is lost, the server will exit
+    info!("waiting for shutdown signal");
+    while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    cancel.cancel();
     server_hdl.stop()?;
     server_hdl.stopped().await;
+    tpu_client_jh.await.expect("failed to join tpu client");
     process::exit(1);
 }
