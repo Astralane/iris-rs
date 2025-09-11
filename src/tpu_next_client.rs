@@ -74,11 +74,15 @@ pub fn spawn_tpu_client_send_txs(
 }
 
 impl SendTransactionClient for TpuClientNextSender {
-    fn send_transaction(&self, wire_transaction: Vec<u8>, mev_protected: bool) {
+    fn send_transaction(&self, wire_transaction: bytes::Bytes, mev_protected: bool) {
         self.send_transaction_batch(vec![wire_transaction], mev_protected);
     }
 
-    fn send_transaction_batch(&self, mut wire_transactions: Vec<Vec<u8>>, mev_protected: bool) {
+    fn send_transaction_batch(
+        &self,
+        mut wire_transactions: Vec<bytes::Bytes>,
+        mev_protected: bool,
+    ) {
         counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
         if wire_transactions.is_empty() {
             return;
@@ -88,7 +92,7 @@ impl SendTransactionClient for TpuClientNextSender {
         } else {
             MEV_PROTECT_FALSE_PREFIX
         };
-        wire_transactions.push(prefix.to_vec());
+        wire_transactions.push(bytes::Bytes::from(prefix));
         let txn_batch = TransactionBatch::new(wire_transactions);
         let sender = self.sender.clone();
         tokio::spawn(async move {

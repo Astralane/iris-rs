@@ -5,8 +5,8 @@ pub const MEV_PROTECT_TRUE_PREFIX: &[u8] = &[0x01];
 pub const MEV_PROTECT_FALSE_PREFIX: &[u8] = &[0x00];
 
 pub trait SendTransactionClient: Send + Sync {
-    fn send_transaction(&self, txn: Vec<u8>, mev_protect: bool);
-    fn send_transaction_batch(&self, wire_transaction: Vec<Vec<u8>>, mev_protect: bool);
+    fn send_transaction(&self, txn: bytes::Bytes, mev_protect: bool);
+    fn send_transaction_batch(&self, wire_transaction: Vec<bytes::Bytes>, mev_protect: bool);
 }
 
 pub trait ChainStateClient: Send + Sync {

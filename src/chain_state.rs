@@ -1,13 +1,10 @@
 use crate::utils::{generate_random_string, ChainStateClient};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
-use log::error;
 use metrics::gauge;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
-use solana_client::rpc_response::{Response, RpcBlockUpdate};
 use solana_rpc_client_api::config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter};
 use solana_rpc_client_api::response::SlotUpdate;
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::Signature;
 use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
@@ -18,14 +15,12 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBlocks};
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
-const RETRY_INTERVAL: u64 = 1000;
-const MAX_RETRIES: usize = 5;
 const TIMEOUT: Duration = Duration::from_secs(25);
 
 macro_rules! ping_request {
@@ -62,7 +57,7 @@ pub struct ChainStateWsClient {
     slot: Arc<AtomicU64>,
     // signature -> (block_time, slot)
     signature_store: Arc<SignatureStore>,
-    thread_hdls: Vec<JoinHandle<()>>,
+    _thread_hdls: Vec<JoinHandle<()>>,
 }
 
 impl ChainStateWsClient {
@@ -104,7 +99,7 @@ impl ChainStateWsClient {
         Self {
             slot: current_slot,
             signature_store,
-            thread_hdls: hdl,
+            _thread_hdls: hdl,
         }
     }
 }
@@ -127,7 +122,7 @@ fn spawn_ws_block_listener(
 ) -> JoinHandle<()> {
     runtime.spawn(async move {
         let config = Some(RpcBlockSubscribeConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
+            commitment: Some(solana_commitment_config::CommitmentConfig::confirmed()),
             encoding: Some(Base64),
             transaction_details: Some(Signatures),
             show_rewards: Some(false),

@@ -1,7 +1,6 @@
 use crate::shield::YellowstoneShieldProvider;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use log::{debug, warn};
 use once_cell::sync::Lazy;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -11,6 +10,7 @@ use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, Worke
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 static BLOCKED_LEADERS: Lazy<ArcSwap<Vec<SocketAddr>>> =
     Lazy::new(|| ArcSwap::from_pointee(vec![]));

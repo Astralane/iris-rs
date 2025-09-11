@@ -1,30 +1,30 @@
 use dashmap::DashMap;
-use solana_sdk::transaction::VersionedTransaction;
+use solana_sdk::signature::Signature;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::error;
 
 #[derive(Clone, Debug)]
-pub struct TransactionData {
-    pub wire_transaction: Vec<u8>,
-    pub versioned_transaction: VersionedTransaction,
+pub struct TransactionContext {
+    pub wire_transaction: bytes::Bytes,
+    pub signature: Signature,
     pub sent_at: Instant,
     pub slot: u64,
     pub retry_count: usize,
     pub mev_protect: bool,
 }
 
-impl TransactionData {
+impl TransactionContext {
     pub fn new(
-        wire_transaction: Vec<u8>,
-        versioned_transaction: VersionedTransaction,
+        wire_transaction: bytes::Bytes,
+        signature: Signature,
         slot: u64,
         retry_count: usize,
         mev_protect: bool,
     ) -> Self {
         Self {
             wire_transaction,
-            versioned_transaction,
+            signature,
             sent_at: Instant::now(),
             slot,
             retry_count,
@@ -34,14 +34,14 @@ impl TransactionData {
 }
 
 pub trait TransactionStore: Send + Sync {
-    fn add_transaction(&self, transaction: TransactionData);
-    fn remove_transaction(&self, signature: String) -> Option<TransactionData>;
-    fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>>;
+    fn add_transaction(&self, transaction: TransactionContext);
+    fn remove_transaction(&self, signature: String) -> Option<TransactionContext>;
+    fn get_transactions(&self) -> Arc<DashMap<String, TransactionContext>>;
     fn has_signature(&self, signature: &str) -> bool;
 }
 
 pub struct TransactionStoreImpl {
-    transactions: Arc<DashMap<String, TransactionData>>,
+    transactions: Arc<DashMap<String, TransactionContext>>,
 }
 
 impl TransactionStoreImpl {
@@ -54,7 +54,7 @@ impl TransactionStoreImpl {
 }
 
 impl TransactionStore for TransactionStoreImpl {
-    fn add_transaction(&self, transaction: TransactionData) {
+    fn add_transaction(&self, transaction: TransactionContext) {
         if let Some(signature) = get_signature(&transaction) {
             if self.transactions.contains_key(&signature) {
                 return;
@@ -64,12 +64,11 @@ impl TransactionStore for TransactionStoreImpl {
             error!("Transaction has no signatures");
         }
     }
-
-    fn remove_transaction(&self, signature: String) -> Option<TransactionData> {
+    fn remove_transaction(&self, signature: String) -> Option<TransactionContext> {
         let transaction = self.transactions.remove(&signature);
         transaction.map_or(None, |t| Some(t.1))
     }
-    fn get_transactions(&self) -> Arc<DashMap<String, TransactionData>> {
+    fn get_transactions(&self) -> Arc<DashMap<String, TransactionContext>> {
         self.transactions.clone()
     }
     fn has_signature(&self, signature: &str) -> bool {
@@ -77,10 +76,6 @@ impl TransactionStore for TransactionStoreImpl {
     }
 }
 
-pub fn get_signature(transaction: &TransactionData) -> Option<String> {
-    transaction
-        .versioned_transaction
-        .signatures
-        .get(0)
-        .map(|s| s.to_string())
+pub fn get_signature(transaction: &TransactionContext) -> Option<String> {
+    transaction.signature.to_string().parse().ok()
 }
