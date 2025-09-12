@@ -70,6 +70,7 @@ pub struct Config {
     gossip_keypair_file: Option<String>,
     gossip_entrypoint: Option<SocketAddr>,
     gossip_addr: Option<SocketAddr>,
+    shred_version: u16,
     enable_gossip: bool,
     rust_log: Option<String>,
 }
@@ -139,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
         config.gossip_entrypoint.as_ref(),
         shutdown.clone(),
         config.gossip_addr.as_ref(),
-        0,
+        config.shred_version,
         true,
         socket_addr_space,
     );
