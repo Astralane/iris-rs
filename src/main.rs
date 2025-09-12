@@ -133,19 +133,16 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
     let socket_addr_space = SocketAddrSpace::new(false);
-    if config.enable_gossip {
-        let (_gossip_service, _ip_echo, cluster_info) =
-            solana_gossip::gossip_service::make_gossip_node(
-                gossip_keypair,
-                config.gossip_entrypoint.as_ref(),
-                shutdown.clone(),
-                config.gossip_addr.as_ref(),
-                0,
-                true,
-                socket_addr_space,
-            );
-        info!("gossip cluster info {:?}", cluster_info)
-    }
+
+    let (_gossip_service, _ip_echo, cluster_info) = solana_gossip::gossip_service::make_gossip_node(
+        gossip_keypair,
+        config.gossip_entrypoint.as_ref(),
+        shutdown.clone(),
+        config.gossip_addr.as_ref(),
+        0,
+        true,
+        socket_addr_space,
+    );
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
@@ -192,6 +189,8 @@ async fn main() -> anyhow::Result<()> {
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        let res = cluster_info.contact_info_trace();
+        info!("{:?}", res);
     }
     cancel.cancel();
     server_hdl.stop()?;
