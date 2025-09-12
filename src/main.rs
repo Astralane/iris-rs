@@ -81,7 +81,6 @@ async fn main() -> anyhow::Result<()> {
 
     //read config from env variables
     let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
-    info!("config: {:?}", config);
 
     match config.otpl_endpoint.clone() {
         Some(endpoint) => {
@@ -96,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
         }
         None => init_subscriber_without_signoz(std::io::stdout),
     }
+    info!("config: {:?}", config);
 
     let identity_keypair = config
         .identity_keypair_file
