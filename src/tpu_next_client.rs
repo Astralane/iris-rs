@@ -15,7 +15,7 @@ use std::sync::{atomic, Arc};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info};
 
 pub struct TpuClientNextSender {
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
@@ -67,6 +67,7 @@ pub fn spawn_tpu_client_send_txs(
             let _ = scheduler
                 .run_with_broadcaster::<MevProtectedBroadcaster>(config)
                 .await;
+            info!("exiting tpu client next scheduler")
         }
     });
     let tasks = futures_util::future::try_join(tpu_scheduler_task, broadcaster_task);
