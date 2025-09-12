@@ -64,9 +64,12 @@ pub fn spawn_tpu_client_send_txs(
                 scheduler.get_stats().clone(),
                 metrics_update_interval_secs,
             ));
-            let _ = scheduler
-                .run_with_broadcaster::<MevProtectedBroadcaster>(config)
-                .await;
+            tokio::select! {
+                _ = cancel.cancelled() => {},
+                _ = scheduler.run_with_broadcaster::<MevProtectedBroadcaster>(config) => {
+                    info!("tpu client next scheduler exited");
+                }
+            };
             info!("exiting tpu client next scheduler")
         }
     });
