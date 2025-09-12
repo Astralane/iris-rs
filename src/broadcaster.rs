@@ -34,7 +34,7 @@ pub fn run(
             tokio::select! {
                 _ = cancel.cancelled() => {
                     warn!("Cancel signal received, exiting");
-                    return;
+                    break;
                 }
                 _ = interval.tick() => {
                     debug!("Refreshing blocked leaders list");
@@ -54,6 +54,7 @@ pub fn run(
                 }
             }
         }
+        info!("Exiting blocked leaders refresh task");
     })
 }
 
