@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     match config.otpl_endpoint.clone() {
         Some(endpoint) => {
             let subscriber = get_subscriber_with_otpl(
-                config.rust_log.unwrap_or("info".to_string()),
+                config.rust_log.clone().unwrap_or("info".to_string()),
                 endpoint,
                 config.address.port().clone(),
                 std::io::stdout,
