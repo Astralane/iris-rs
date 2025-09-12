@@ -15,7 +15,7 @@ use std::sync::{atomic, Arc};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info};
 
 pub struct TpuClientNextSender {
     sender: tokio::sync::mpsc::Sender<TransactionBatch>,
@@ -38,7 +38,7 @@ pub fn spawn_tpu_client_send_txs(
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
     let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
-    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc);
+    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc, cancel.clone());
     let tpu_scheduler_task = tokio::spawn({
         async move {
             let config = ConnectionWorkersSchedulerConfig {
@@ -64,9 +64,13 @@ pub fn spawn_tpu_client_send_txs(
                 scheduler.get_stats().clone(),
                 metrics_update_interval_secs,
             ));
-            let _ = scheduler
-                .run_with_broadcaster::<MevProtectedBroadcaster>(config)
-                .await;
+            tokio::select! {
+                _ = cancel.cancelled() => {},
+                _ = scheduler.run_with_broadcaster::<MevProtectedBroadcaster>(config) => {
+                    info!("tpu client next scheduler exited");
+                }
+            };
+            info!("exiting tpu client next scheduler")
         }
     });
     let tasks = futures_util::future::try_join(tpu_scheduler_task, broadcaster_task);

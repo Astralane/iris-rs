@@ -10,29 +10,51 @@ use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, Worke
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use std::time::Duration;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 static BLOCKED_LEADERS: Lazy<ArcSwap<Vec<SocketAddr>>> =
     Lazy::new(|| ArcSwap::from_pointee(vec![]));
 
+const TIMEOUT: Duration = Duration::from_secs(5);
+
 const REFRESH_LIST_DURATION: std::time::Duration = std::time::Duration::from_secs(1 * 60 * 60); // 1 hour
 pub struct MevProtectedBroadcaster;
-pub fn run(key: Pubkey, rpc: Arc<RpcClient>) -> tokio::task::JoinHandle<()> {
+pub fn run(
+    key: Pubkey,
+    rpc: Arc<RpcClient>,
+    cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     let shield = YellowstoneShieldProvider::new(key, rpc);
+    let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
     tokio::spawn(async move {
         loop {
-            match shield.get_blocked_ips().await {
-                Ok(blocked_leaders) => {
-                    BLOCKED_LEADERS.store(Arc::new(blocked_leaders));
-                    debug!("Updated blocked leaders: {:?}", BLOCKED_LEADERS.load());
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    warn!("Cancel signal received, exiting");
+                    break;
                 }
-                Err(e) => {
-                    warn!("Failed to fetch blocked leaders: {:?}", e);
+                _ = interval.tick() => {
+                    debug!("Refreshing blocked leaders list");
                 }
             }
-            // Sleep for a while before fetching again
-            tokio::time::sleep(REFRESH_LIST_DURATION).await;
+            match timeout(TIMEOUT, shield.get_blocked_ips()).await {
+                Err(_) => {
+                    warn!("Timeout fetching blocked leaders");
+                    continue;
+                }
+                Ok(Err(e)) => {
+                    warn!("Failed to fetch blocked leaders {:?}", e);
+                }
+                Ok(Ok(blocked_leaders)) => {
+                    BLOCKED_LEADERS.store(Arc::new(blocked_leaders));
+                    info!("Updated blocked leaders: {:?}", BLOCKED_LEADERS.load());
+                }
+            }
         }
+        info!("Exiting blocked leaders refresh task");
     })
 }
 

@@ -21,7 +21,7 @@ use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBloc
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeRequestPing};
 
-const TIMEOUT: Duration = Duration::from_secs(25);
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 macro_rules! ping_request {
     () => {
