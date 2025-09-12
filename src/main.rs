@@ -134,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
     let socket_addr_space = SocketAddrSpace::new(false);
     if config.enable_gossip {
-        let (_gossip_service, _ip_echo, _s_py_ref) =
+        let (_gossip_service, _ip_echo, cluster_info) =
             solana_gossip::gossip_service::make_gossip_node(
                 gossip_keypair,
                 config.gossip_entrypoint.as_ref(),
@@ -144,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
                 true,
                 socket_addr_space,
             );
+        info!("gossip cluster info {:?}", cluster_info)
     }
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
