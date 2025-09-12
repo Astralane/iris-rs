@@ -67,7 +67,10 @@ pub struct Config {
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
     dedup_cache_max_size: usize,
-    shred_version: u16,
+    gossip_keypair_file: Option<String>,
+    gossip_entrypoint: Option<SocketAddr>,
+    gossip_addr: Option<SocketAddr>,
+    enable_gossip: bool,
     rust_log: Option<String>,
 }
 
@@ -103,6 +106,12 @@ async fn main() -> anyhow::Result<()> {
         .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"))
         .unwrap_or(Keypair::new());
 
+    let gossip_keypair = config
+        .gossip_keypair_file
+        .as_ref()
+        .map(|file| read_keypair_file(file).expect("Failed to read gossip keypair file"))
+        .unwrap_or(Keypair::new());
+
     let shield_policy_key = config
         .shield_policy_key
         .map(|s| Pubkey::from_str(&s))
@@ -124,15 +133,18 @@ async fn main() -> anyhow::Result<()> {
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
     let socket_addr_space = SocketAddrSpace::new(false);
-    let (_gossip_service, _ip_echo, _s_py_ref) = solana_gossip::gossip_service::make_gossip_node(
-        Keypair::new(),
-        None,
-        shutdown.clone(),
-        None,
-        config.shred_version,
-        false,
-        socket_addr_space,
-    );
+    if config.enable_gossip {
+        let (_gossip_service, _ip_echo, _s_py_ref) =
+            solana_gossip::gossip_service::make_gossip_node(
+                gossip_keypair,
+                config.gossip_entrypoint.as_ref(),
+                shutdown.clone(),
+                config.gossip_addr.as_ref(),
+                0,
+                false,
+                socket_addr_space,
+            );
+    }
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
