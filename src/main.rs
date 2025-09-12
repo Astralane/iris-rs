@@ -141,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
                 shutdown.clone(),
                 config.gossip_addr.as_ref(),
                 0,
-                false,
+                true,
                 socket_addr_space,
             );
     }
