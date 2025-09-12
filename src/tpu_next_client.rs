@@ -38,7 +38,7 @@ pub fn spawn_tpu_client_send_txs(
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
     let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
-    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc);
+    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc, cancel.clone());
     let tpu_scheduler_task = tokio::spawn({
         async move {
             let config = ConnectionWorkersSchedulerConfig {
