@@ -189,8 +189,7 @@ async fn main() -> anyhow::Result<()> {
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let res = cluster_info.contact_info_trace();
-        info!("{:?}", res);
+        info!("contact info {:?}", cluster_info.my_contact_info())
     }
     cancel.cancel();
     server_hdl.stop()?;
