@@ -9,6 +9,8 @@ solana-client = { git = "https://github.com/anza-xyz/agave.git", branch = "maste
 solana-transaction-status = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 solana-rpc-client-api = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 agave-transaction-view = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-gossip = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
+solana-streamer = { git = "https://github.com/anza-xyz/agave.git", branch = "master" }
 
 solana-sdk = "3.0.0"
 solana-commitment-config = "3.0.0"

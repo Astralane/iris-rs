@@ -16,6 +16,7 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_streamer::socket::SocketAddrSpace;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -66,6 +67,7 @@ pub struct Config {
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
     dedup_cache_max_size: usize,
+    shred_version: u16,
     rust_log: Option<String>,
 }
 
@@ -121,6 +123,16 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow!(e))?;
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
+    let socket_addr_space = SocketAddrSpace::new(false);
+    let (_gossip_service, _ip_echo, _s_py_ref) = solana_gossip::gossip_service::make_gossip_node(
+        Keypair::new(),
+        None,
+        shutdown.clone(),
+        None,
+        config.shred_version,
+        false,
+        socket_addr_space,
+    );
 
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
