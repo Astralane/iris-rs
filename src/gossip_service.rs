@@ -22,12 +22,12 @@ pub fn run_gossip_service(
     gossip_keypair: Option<Keypair>,
     exit: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
-    let gossip_hld = std::thread::spawn(move || {
+    let gossip_hdl = std::thread::spawn(move || {
         let gossip_service = make_gossip_service(port_range, gossip_keypair, exit);
         gossip_service.join().expect("gossip service handle");
     });
     tokio::spawn(async move {
-        while !gossip_hld.is_finished() {
+        while !gossip_hdl.is_finished() {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     })
