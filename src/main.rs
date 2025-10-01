@@ -69,11 +69,7 @@ pub struct Config {
     otpl_endpoint: Option<String>,
     dedup_cache_max_size: usize,
     gossip_keypair_file: Option<String>,
-    gossip_entrypoint: Option<SocketAddr>,
-    gossip_addr: Option<SocketAddr>,
-    shred_version: u16,
     gossip_port_range: Option<(u16, u16)>,
-    gossip_keypair: Option<String>,
 }
 
 #[tokio::main]
