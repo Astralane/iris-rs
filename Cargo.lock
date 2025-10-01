@@ -2992,6 +2992,7 @@ dependencies = [
  "solana-client",
  "solana-commitment-config",
  "solana-gossip",
+ "solana-net-utils",
  "solana-packet",
  "solana-rpc-client-api",
  "solana-sdk",

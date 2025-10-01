@@ -15,8 +15,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{read_keypair_file, Keypair};
-use solana_streamer::socket::SocketAddrSpace;
+use solana_sdk::signature::read_keypair_file;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -28,9 +27,11 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
 mod chain_state;
+mod gossip_service;
 mod otel_tracer;
 mod rpc;
 mod rpc_server;
@@ -71,8 +72,8 @@ pub struct Config {
     gossip_entrypoint: Option<SocketAddr>,
     gossip_addr: Option<SocketAddr>,
     shred_version: u16,
-    enable_gossip: bool,
-    rust_log: Option<String>,
+    gossip_port_range: Option<(u16, u16)>,
+    gossip_keypair: Option<String>,
 }
 
 #[tokio::main]
@@ -82,14 +83,18 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     //read config from env variables
-    let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
+    let config: Config = Figment::new()
+        .merge(Env::raw())
+        .extract()
+        .expect("config not valid");
 
     match config.otpl_endpoint.clone() {
         Some(endpoint) => {
             let subscriber = get_subscriber_with_otpl(
-                config.rust_log.clone().unwrap_or("info".to_string()),
+                env_filter,
                 endpoint,
                 config.address.port().clone(),
                 std::io::stdout,
@@ -99,19 +104,14 @@ async fn main() -> anyhow::Result<()> {
         }
         None => init_subscriber_without_signoz(std::io::stdout),
     }
+
     info!("config: {:?}", config);
 
     let identity_keypair = config
         .identity_keypair_file
         .as_ref()
-        .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"))
-        .unwrap_or(Keypair::new());
-
-    let gossip_keypair = config
-        .gossip_keypair_file
-        .as_ref()
-        .map(|file| read_keypair_file(file).expect("Failed to read gossip keypair file"))
-        .unwrap_or(Keypair::new());
+        .and_then(|file| read_keypair_file(file).ok())
+        .expect("No identity keypair file");
 
     let shield_policy_key = config
         .shield_policy_key
@@ -126,6 +126,21 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let cancel = CancellationToken::new();
+
+    let mut gossip_task = if let Some(port_range) = config.gossip_port_range {
+        let gossip_keypair = config
+            .gossip_keypair_file
+            .as_ref()
+            .and_then(|file| read_keypair_file(file).ok());
+        Some(gossip_service::run_gossip_service(
+            port_range,
+            gossip_keypair,
+            shutdown.clone(),
+        ))
+    } else {
+        None
+    };
+
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     info!("creating leader updater...");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
@@ -133,18 +148,6 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow!(e))?;
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
-    let socket_addr_space = SocketAddrSpace::new(false);
-
-    let (_gossip_service, _ip_echo, cluster_info) = solana_gossip::gossip_service::make_gossip_node(
-        gossip_keypair,
-        config.gossip_entrypoint.as_ref(),
-        shutdown.clone(),
-        config.gossip_addr.as_ref(),
-        config.shred_version,
-        true,
-        socket_addr_space,
-    );
-
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
         config.leaders_fanout,
@@ -190,11 +193,13 @@ async fn main() -> anyhow::Result<()> {
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        info!("contact info {:?}", cluster_info.my_contact_info())
     }
     cancel.cancel();
     server_hdl.stop()?;
     server_hdl.stopped().await;
     tpu_client_jh.await.expect("failed to join tpu client");
+    if let Some(gossip_task) = gossip_task.take() {
+        gossip_task.await.expect("failed to join gossip task");
+    }
     process::exit(1);
 }
