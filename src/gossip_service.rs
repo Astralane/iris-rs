@@ -28,10 +28,14 @@ pub fn run_gossip_service(
     gossip_keypair: Option<Keypair>,
     exit: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
-    let gossip_hdl = std::thread::spawn(move || {
-        let gossip_service = make_gossip_service(port_range, gossip_keypair, exit);
-        gossip_service.join().expect("gossip service handle");
-    });
+    let gossip_hdl = std::thread::Builder::new()
+        .name("iris-gossip-t".to_string())
+        .spawn(move || {
+            let gossip_service = make_gossip_service(port_range, gossip_keypair, exit);
+            gossip_service.join().expect("gossip service handle");
+        })
+        .expect("failed to spawn gossip service thread");
+
     tokio::spawn(async move {
         while !gossip_hdl.is_finished() {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -45,7 +49,7 @@ fn make_gossip_service(
     exit: Arc<AtomicBool>,
 ) -> GossipService {
     let gossip_keypair = Arc::new(gossip_keypair.unwrap_or(Keypair::new()));
-    let bind_address = solana_net_utils::parse_host("0.0.0.0:0").expect("invalid bind address");
+    let bind_address = solana_net_utils::parse_host("0.0.0.0").expect("invalid bind address");
 
     let cluster_endpoints_sockets = ENTRYPOINTS
         .iter()
