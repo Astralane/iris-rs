@@ -15,7 +15,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tracing::info;
 
-const ENTRYPOINTS: [&str; 4] = ["", "", "", ""];
+const ENTRYPOINTS: [&str; 5] = [
+    "entrypoint.mainnet-beta.solana.com:8001",
+    "entrypoint2.mainnet-beta.solana.com:8001",
+    "entrypoint3.mainnet-beta.solana.com:8001",
+    "entrypoint4.mainnet-beta.solana.com:8001",
+    "entrypoint5.mainnet-beta.solana.com:8001",
+];
 
 pub fn run_gossip_service(
     port_range: (u16, u16),
