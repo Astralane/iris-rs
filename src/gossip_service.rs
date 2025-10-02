@@ -53,8 +53,7 @@ fn make_gossip_service(
 
     let cluster_endpoints_sockets = ENTRYPOINTS
         .iter()
-        .flat_map(|entry| solana_net_utils::parse_host(entry))
-        .map(|ip| SocketAddr::new(ip, port_range.0))
+        .flat_map(|entry| solana_net_utils::parse_host_port(entry))
         .collect::<Vec<SocketAddr>>();
 
     assert_eq!(cluster_endpoints_sockets.len(), 5, "invalid entrypoints");
