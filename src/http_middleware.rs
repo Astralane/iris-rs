@@ -41,8 +41,8 @@ where
             Some(ts) => {
                 let now = chrono::Utc::now();
                 let latency = now.signed_duration_since(ts.with_timezone(&chrono::Utc));
-                histogram!("iris_http_request_receive_latency_ms", "origin" => origin_header)
-                    .record(latency.num_milliseconds() as f64);
+                histogram!("iris_http_request_receive_latency_us", "origin" => origin_header)
+                    .record(latency.num_microseconds().unwrap_or(999999) as f64);
             }
             None => {
                 debug!("No X-Transaction-Timestamp header found in the request");
