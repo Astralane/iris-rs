@@ -1,5 +1,6 @@
 #![warn(unused_crate_dependencies)]
 use crate::chain_state::ChainStateWsClient;
+use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
 };
@@ -8,14 +9,14 @@ use crate::rpc_server::IrisRpcServerImpl;
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
-use jsonrpsee::server::ServerBuilder;
+use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_sdk::signature::read_keypair_file;
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -27,9 +28,12 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
 mod chain_state;
+mod gossip_service;
+mod http_middleware;
 mod otel_tracer;
 mod rpc;
 mod rpc_server;
@@ -66,7 +70,8 @@ pub struct Config {
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
     dedup_cache_max_size: usize,
-    rust_log: Option<String>,
+    gossip_keypair_file: Option<String>,
+    gossip_port_range: Option<(u16, u16)>,
 }
 
 #[tokio::main]
@@ -76,15 +81,18 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to install default crypto provider");
 
     dotenv::dotenv().ok();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     //read config from env variables
-    let config: Config = Figment::new().merge(Env::raw()).extract().unwrap();
-    info!("config: {:?}", config);
+    let config: Config = Figment::new()
+        .merge(Env::raw())
+        .extract()
+        .expect("config not valid");
 
     match config.otpl_endpoint.clone() {
         Some(endpoint) => {
             let subscriber = get_subscriber_with_otpl(
-                config.rust_log.unwrap_or("info".to_string()),
+                env_filter,
                 endpoint,
                 config.address.port().clone(),
                 std::io::stdout,
@@ -95,11 +103,13 @@ async fn main() -> anyhow::Result<()> {
         None => init_subscriber_without_signoz(std::io::stdout),
     }
 
+    info!("config: {:?}", config);
+
     let identity_keypair = config
         .identity_keypair_file
         .as_ref()
-        .map(|file| read_keypair_file(file).expect("Failed to read identity keypair file"))
-        .unwrap_or(Keypair::new());
+        .and_then(|file| read_keypair_file(file).ok())
+        .expect("No identity keypair file");
 
     let shield_policy_key = config
         .shield_policy_key
@@ -114,6 +124,21 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let cancel = CancellationToken::new();
+
+    let mut gossip_task = if let Some(port_range) = config.gossip_port_range {
+        let gossip_keypair = config
+            .gossip_keypair_file
+            .as_ref()
+            .and_then(|file| read_keypair_file(file).ok());
+        Some(gossip_service::run_gossip_service(
+            port_range,
+            gossip_keypair,
+            shutdown.clone(),
+        ))
+    } else {
+        None
+    };
+
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     info!("creating leader updater...");
     let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
@@ -121,7 +146,6 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow!(e))?;
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
-
     let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
         leader_updater,
         config.leaders_fanout,
@@ -155,9 +179,16 @@ async fn main() -> anyhow::Result<()> {
         config.dedup_cache_max_size,
     );
 
-    let server = ServerBuilder::default()
-        .max_request_body_size(15_000_000)
-        .max_connections(1_000_000)
+    let server_config = ServerConfig::builder()
+        .max_request_body_size(10 * 1024 * 1024)
+        .max_connections(10_000)
+        .set_keep_alive(Some(Duration::from_secs(60)))
+        .set_tcp_no_delay(true)
+        .build();
+
+    let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
+    let server = ServerBuilder::with_config(server_config)
+        .set_http_middleware(http_middleware)
         .build(config.address)
         .await?;
 
@@ -172,5 +203,8 @@ async fn main() -> anyhow::Result<()> {
     server_hdl.stop()?;
     server_hdl.stopped().await;
     tpu_client_jh.await.expect("failed to join tpu client");
+    if let Some(gossip_task) = gossip_task.take() {
+        gossip_task.await.expect("failed to join gossip task");
+    }
     process::exit(1);
 }

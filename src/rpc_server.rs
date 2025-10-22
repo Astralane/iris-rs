@@ -142,17 +142,15 @@ impl IrisRpcServer for IrisRpcServerImpl {
     async fn send_transaction(
         &self,
         txn: String,
-        params: RpcSendTransactionConfig,
+        params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<String> {
         info!("Received transaction on rpc connection loop");
         counter!("iris_txn_total_transactions").increment(1);
         let mev_protect = mev_protect.unwrap_or(false);
-        let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
-        if !params.skip_preflight {
-            counter!("iris_error", "type" => "preflight_check").increment(1);
-            return Err(invalid_request("running preflight check is not supported"));
-        }
+        let encoding = params
+            .and_then(|params| params.encoding)
+            .unwrap_or(UiTransactionEncoding::Base64);
         let binary_encoding = encoding.into_binary_encoding().ok_or_else(|| {
             counter!("iris_error", "type" => "invalid_encoding").increment(1);
             invalid_request(&format!(
@@ -184,7 +182,9 @@ impl IrisRpcServer for IrisRpcServerImpl {
             wire_transaction,
             signature,
             slot,
-            params.max_retries.unwrap_or(self.max_retries as usize),
+            params
+                .and_then(|params| params.max_retries)
+                .unwrap_or(self.max_retries as usize),
             mev_protect,
         );
         // add to store
@@ -198,7 +198,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
     async fn send_transaction_batch(
         &self,
         batch: Vec<String>,
-        params: RpcSendTransactionConfig,
+        params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>> {
         let mev_protect = mev_protect.unwrap_or(false);
@@ -214,11 +214,9 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 counter!("iris_error", "type" => "duplicate_transaction_in_batch").increment(1);
                 return Err(invalid_request("duplicate transaction"));
             }
-            let encoding = params.encoding.unwrap_or(UiTransactionEncoding::Base58);
-            if !params.skip_preflight {
-                counter!("iris_error", "type" => "preflight_check").increment(1);
-                return Err(invalid_request("running preflight check is not supported"));
-            }
+            let encoding = params
+                .and_then(|params| params.encoding)
+                .unwrap_or(UiTransactionEncoding::Base64);
             let binary_encoding = encoding.into_binary_encoding().ok_or_else(|| {
                 counter!("iris_error", "type" => "invalid_encoding").increment(1);
                 invalid_request(&format!(
@@ -250,7 +248,9 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 wire_transaction,
                 signature,
                 slot,
-                params.max_retries.unwrap_or(self.max_retries as usize),
+                params
+                    .and_then(|params| params.max_retries)
+                    .unwrap_or(self.max_retries as usize),
                 mev_protect,
             );
             // add to store

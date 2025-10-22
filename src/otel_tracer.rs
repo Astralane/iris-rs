@@ -12,8 +12,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 
 pub async fn get_subscriber_with_otpl<Sink>(
-    env_filter: String,
-    jaeger_endpoint: String,
+    env_filter: EnvFilter,
+    otpl_endpoint: String,
     bind_port: u16,
     sink: Sink,
 ) -> impl Subscriber + Send + Sync
@@ -31,7 +31,7 @@ where
         .with_batch_exporter(
             opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
-                .with_endpoint(jaeger_endpoint.clone())
+                .with_endpoint(otpl_endpoint.clone())
                 .build()
                 .expect("Couldn't create OTLP tracer"),
         )
@@ -52,7 +52,7 @@ where
         .with_batch_exporter(
             LogExporter::builder()
                 .with_tonic()
-                .with_endpoint(jaeger_endpoint)
+                .with_endpoint(otpl_endpoint)
                 .build()
                 .expect("Couldn't create OTL tracer"),
         )
@@ -61,7 +61,6 @@ where
 
     let logging_layer = OpenTelemetryTracingBridge::new(&log_tracer);
 
-    let env_filter = EnvFilter::new(env_filter);
     let format_layer = fmt::Layer::default().with_writer(sink);
 
     Registry::default()

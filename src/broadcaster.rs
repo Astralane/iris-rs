@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 static BLOCKED_LEADERS: Lazy<ArcSwap<Vec<SocketAddr>>> =
     Lazy::new(|| ArcSwap::from_pointee(vec![]));
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 const REFRESH_LIST_DURATION: std::time::Duration = std::time::Duration::from_secs(1 * 60 * 60); // 1 hour
 pub struct MevProtectedBroadcaster;
@@ -37,20 +37,19 @@ pub fn run(
                     break;
                 }
                 _ = interval.tick() => {
-                    debug!("Refreshing blocked leaders list");
-                }
-            }
-            match timeout(TIMEOUT, shield.get_blocked_ips()).await {
-                Err(_) => {
-                    warn!("Timeout fetching blocked leaders");
-                    continue;
-                }
-                Ok(Err(e)) => {
-                    warn!("Failed to fetch blocked leaders {:?}", e);
-                }
-                Ok(Ok(blocked_leaders)) => {
-                    BLOCKED_LEADERS.store(Arc::new(blocked_leaders));
-                    info!("Updated blocked leaders: {:?}", BLOCKED_LEADERS.load());
+                    match timeout(TIMEOUT, shield.get_blocked_ips()).await {
+                        Ok(Ok(blocked_leaders)) => {
+                            BLOCKED_LEADERS.store(Arc::new(blocked_leaders));
+                            info!("Updated blocked leaders: {:?}", BLOCKED_LEADERS.load());
+                        }
+                        Ok(Err(e)) => {
+                            warn!("Failed to fetch blocked leaders {:?}", e);
+                        }
+                        Err(_) => {
+                            warn!("Timeout fetching blocked leaders");
+                            continue;
+                        }
+                    }
                 }
             }
         }
