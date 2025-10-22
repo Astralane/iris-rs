@@ -10,7 +10,7 @@ pub trait IrisRpc {
     async fn send_transaction(
         &self,
         txn: String,
-        params: RpcSendTransactionConfig,
+        params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<String>;
 
@@ -18,7 +18,7 @@ pub trait IrisRpc {
     async fn send_transaction_batch(
         &self,
         txns: Vec<String>,
-        params: RpcSendTransactionConfig,
+        params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<Vec<String>>;
 }

@@ -76,7 +76,7 @@ fn make_gossip_service(
         advertised_ip,
         gossip_port: port_range.0,
         port_range,
-        bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_address]).unwrap()),
+        bind_ip_addrs: BindIpAddrs::new(vec![bind_address]).unwrap(),
         public_tpu_addr: None,
         public_tpu_forwards_addr: None,
         vortexor_receiver_addr: None,

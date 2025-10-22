@@ -1,5 +1,6 @@
 #![warn(unused_crate_dependencies)]
 use crate::chain_state::ChainStateWsClient;
+use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
 };
@@ -8,7 +9,7 @@ use crate::rpc_server::IrisRpcServerImpl;
 use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
-use jsonrpsee::server::ServerBuilder;
+use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ use tracing_subscriber::EnvFilter;
 mod broadcaster;
 mod chain_state;
 mod gossip_service;
+mod http_middleware;
 mod otel_tracer;
 mod rpc;
 mod rpc_server;
@@ -177,9 +179,16 @@ async fn main() -> anyhow::Result<()> {
         config.dedup_cache_max_size,
     );
 
-    let server = ServerBuilder::default()
-        .max_request_body_size(15_000_000)
-        .max_connections(1_000_000)
+    let server_config = ServerConfig::builder()
+        .max_request_body_size(10 * 1024 * 1024)
+        .max_connections(10_000)
+        .set_keep_alive(Some(Duration::from_secs(60)))
+        .set_tcp_no_delay(true)
+        .build();
+
+    let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
+    let server = ServerBuilder::with_config(server_config)
+        .set_http_middleware(http_middleware)
         .build(config.address)
         .await?;
 

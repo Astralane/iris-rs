@@ -20,7 +20,7 @@ solana-packet = "3.0.0"
 yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v10.0.0+solana.3.0.0" }
 yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc.git", tag = "v10.0.0+solana.3.0.0", default-features = false }
 
-jsonrpsee = { version = "=0.24.5", features = ["server", "http-client", "macros"] }
+jsonrpsee = { version = "0.26.0", features = ["server", "http-client", "macros"] }
 tokio = "1.40.0"
 tokio-util = "0.7.12"
 dashmap = "6.1.0"
@@ -49,6 +49,8 @@ opentelemetry-appender-tracing = "0.30.1"
 tracing-log = "0.2.0"
 reqwest = "0.12.19"
 moka = { version = "0.12.10", features = ["future"] }
+tower = "0.5.2"
+chrono = "0.4.42"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
