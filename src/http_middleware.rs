@@ -1,6 +1,6 @@
 use jsonrpsee::core::http_helpers::{Body, Request, Response};
 use jsonrpsee::core::BoxError;
-use metrics::histogram;
+use metrics::{counter, histogram};
 use tracing::debug;
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ where
 
         let origin_header = req
             .headers()
-            .get("Origin")
+            .get("X-Client-IP")
             .and_then(|value| value.to_str().ok())
             .unwrap_or("unknown")
             .to_string();
@@ -41,11 +41,21 @@ where
             Some(ts) => {
                 let now = chrono::Utc::now();
                 let latency = now.signed_duration_since(ts.with_timezone(&chrono::Utc));
-                histogram!("iris_http_request_receive_latency_us", "origin" => origin_header)
-                    .record(latency.num_microseconds().unwrap_or(999999) as f64);
+                match latency.num_microseconds() {
+                    Some(latency_us) => {
+                        histogram!("iris_http_request_receive_latency_us", "origin" => origin_header)
+                            .record(latency_us as  f64);
+                    }
+                    None => {
+                        counter!("iris_http_request_receive_latency_us", "origin" => origin_header)
+                            .increment(1);
+                    }
+                }
             }
             None => {
                 debug!("No X-Transaction-Timestamp header found in the request");
+                counter!("iris_http_request_receive_latency_us_missing_timestamp", "origin" => origin_header)
+                    .increment(1);
             }
         }
 
