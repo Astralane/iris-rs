@@ -47,14 +47,14 @@ where
                             .record(latency_us as  f64);
                     }
                     None => {
-                        counter!("iris_http_request_receive_latency_us", "origin" => origin_header)
+                        counter!("iris_http_request_timestamp_invalid", "origin" => origin_header)
                             .increment(1);
                     }
                 }
             }
             None => {
                 debug!("No X-Transaction-Timestamp header found in the request");
-                counter!("iris_http_request_receive_latency_us_missing_timestamp", "origin" => origin_header)
+                counter!("iris_http_request_timestamp_missing", "origin" => origin_header)
                     .increment(1);
             }
         }
