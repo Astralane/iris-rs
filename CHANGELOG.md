@@ -7,7 +7,8 @@
 ### Summary of changes
 * Added support to deduplicate transactions before sending them to the validator.
 * Modified TPU-level reconnections to minimize connection timeout errors [https://github.com/Astralane/iris-rs/pull/25]
-* Introduced GOSSIP support, allowing Iris nodes to be available on the network.
+* Introduced GOSSIP support, allowing Iris nodes to be available on the network. If set make sure to whitelist the 25 ports range specified in the gossip_port_range
+* GOSSIP_KEYPAIR_FILE is optional as well or you can set it to a random key of your choice via solana-keygen (DO NOT SET IT TO THE SAME FILE AS THE IDENTITY KEYPAIR)
 ---
 
 ## Change Log (17th june)
