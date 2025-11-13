@@ -15,7 +15,6 @@
 
 ### ENV variables changed
 
-* USE_TPU_CLIENT_NEXT( **REMOVED** )
 * TX_MAX_RETRIES (**Renamed** from MAX_RETRIES)
 * METRICS_UPDATE_INTERVAL_SECS  (**ADDED**)
 * LEADERS_FANOUT (**ADDED**)
