@@ -4,12 +4,12 @@ version = "2.0.0"
 edition = "2021"
 
 [dependencies]
-solana-tpu-client-next = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
+solana-tpu-client-next = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts", features = ["agave-unstable-api"] }
 solana-client = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
 solana-transaction-status = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
 solana-rpc-client-api = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
 agave-transaction-view = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
-solana-gossip = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
+solana-gossip = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts", features = ["agave-unstable-api"] }
 solana-streamer = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
 solana-net-utils = { git = "https://github.com/Astralane/agave.git", branch = "reduce-quic-timeouts" }
 

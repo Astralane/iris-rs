@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterBlocks};
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
@@ -163,8 +163,9 @@ fn spawn_ws_block_listener(
                         gauge!("iris_signature_store_size").set(signature_store.len() as f64);
                     }
                 }
-                drop(stream);
-                unsub().await;
+                if let Err(e) = timeout(TIMEOUT, unsub()).await {
+                    error!("Error unsubscribing from ws block updates: {:?}", e);
+                }
             }
             Err(e) => {
                 error!("Error subscribing to block updates {:?}", e);
@@ -172,6 +173,7 @@ fn spawn_ws_block_listener(
                 return;
             }
         }
+        warn!("Shutting down ws block listener thread");
     })
 }
 
@@ -209,8 +211,10 @@ fn spawn_ws_slot_listener(
             current_slot.store(slot, Ordering::Relaxed);
         }
         error!("Slot stream ended unexpectedly!!");
-        drop(stream);
-        unsub().await;
+        if let Err(e) = timeout(TIMEOUT, unsub()).await {
+            error!("Error unsubscribing from ws slot updates: {:?}", e);
+        }
+        warn!("Shutting down ws slot listener thread");
     })
 }
 
@@ -304,7 +308,7 @@ fn spawn_grpc_block_listener(
                         }
                         Some(UpdateOneof::Pong(_)) => {}
                         _ => {
-                            debug!("Unknown message type");
+                            debug!("pong");
                         }
                     },
                     Err(e) => {
@@ -315,5 +319,6 @@ fn spawn_grpc_block_listener(
                 }
             }
         }
+        warn!("Shutting down grpc block listener thread");
     })
 }

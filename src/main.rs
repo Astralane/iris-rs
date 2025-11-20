@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to install recorder/exporter");
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    let cancel = CancellationToken::new();
+    let tpu_client_cancel = CancellationToken::new();
 
     let mut gossip_task = if let Some(port_range) = config.gossip_port_range {
         let gossip_keypair = config
@@ -155,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
         config.metrics_update_interval_secs,
         config.worker_channel_size,
         config.max_reconnect_attempts,
-        cancel.clone(),
+        tpu_client_cancel.clone(),
     );
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
@@ -199,12 +199,16 @@ async fn main() -> anyhow::Result<()> {
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    cancel.cancel();
     server_hdl.stop()?;
+    warn!("exiting rpc server...");
     server_hdl.stopped().await;
+    tpu_client_cancel.cancel();
+    warn!("exiting tpu client task...");
     tpu_client_jh.await.expect("failed to join tpu client");
+    warn!("exiting gossip task...");
     if let Some(gossip_task) = gossip_task.take() {
         gossip_task.await.expect("failed to join gossip task");
     }
-    process::exit(1);
+    info!("shutdown complete");
+    process::exit(0);
 }
