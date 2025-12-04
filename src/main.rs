@@ -199,16 +199,5 @@ async fn main() -> anyhow::Result<()> {
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    server_hdl.stop()?;
-    warn!("exiting rpc server...");
-    server_hdl.stopped().await;
-    tpu_client_cancel.cancel();
-    warn!("exiting tpu client task...");
-    tpu_client_jh.await.expect("failed to join tpu client");
-    warn!("exiting gossip task...");
-    if let Some(gossip_task) = gossip_task.take() {
-        gossip_task.await.expect("failed to join gossip task");
-    }
-    info!("shutdown complete");
     process::exit(0);
 }
