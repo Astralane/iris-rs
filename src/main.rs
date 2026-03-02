@@ -196,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let server_config = ServerConfig::builder()
-        .max_request_body_size(10 * 1024 * 1024)
+        .max_request_body_size(4 * 1024) // 4kb
         .max_connections(10_000)
         .set_keep_alive(Some(Duration::from_secs(60)))
         .set_tcp_no_delay(true)
