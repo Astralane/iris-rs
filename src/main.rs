@@ -43,6 +43,7 @@ mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
+mod quic_server;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
