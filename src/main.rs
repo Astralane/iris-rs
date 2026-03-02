@@ -44,6 +44,9 @@ mod tpu_next_client;
 mod utils;
 mod vendor;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     rpc_url: String,
