@@ -45,6 +45,9 @@ mod utils;
 mod vendor;
 mod quic_server;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     rpc_url: String,
@@ -194,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let server_config = ServerConfig::builder()
-        .max_request_body_size(10 * 1024 * 1024)
+        .max_request_body_size(4 * 1024) // 4kb
         .max_connections(10_000)
         .set_keep_alive(Some(Duration::from_secs(60)))
         .set_tcp_no_delay(true)

@@ -49,6 +49,7 @@ reqwest = "0.12.19"
 moka = { version = "0.12.10", features = ["future"] }
 tower = "0.5.2"
 chrono = "0.4.42"
+mimalloc = "0.1.48"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
