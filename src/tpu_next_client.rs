@@ -1,80 +1,41 @@
-use crate::broadcaster::MevProtectedBroadcaster;
 use crate::utils::{SendTransactionClient, MEV_PROTECT_FALSE_PREFIX, MEV_PROTECT_TRUE_PREFIX};
-use futures_util::future::TryJoin;
 use metrics::{counter, gauge};
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
-use solana_tpu_client_next::connection_workers_scheduler::{
-    BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
-};
+use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::leader_updater::LeaderUpdater;
-use solana_tpu_client_next::transaction_batch::TransactionBatch;
-use solana_tpu_client_next::{ConnectionWorkersScheduler, SendTransactionStats};
+use solana_tpu_client_next::{ClientBuilder, ClientError, SendTransactionStats};
 use std::sync::{atomic, Arc};
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, warn};
 
 pub struct TpuClientNextSender {
-    sender: tokio::sync::mpsc::Sender<TransactionBatch>,
+    inner: solana_tpu_client_next::TransactionSender,
 }
 
-pub fn spawn_tpu_client_send_txs(
+pub fn spawn_tpu_client_next(
+    broadcaster: impl WorkersBroadcaster + 'static,
     leader_updater: Box<dyn LeaderUpdater>,
-    leader_forward_count: u64,
+    leader_fan_out: usize,
     validator_identity: Keypair,
-    rpc: Arc<RpcClient>,
-    blocklist_key: Pubkey,
-    metrics_update_interval_secs: u64,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
     cancel: CancellationToken,
-) -> (
-    TpuClientNextSender,
-    TryJoin<tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>>,
-) {
-    let (sender, receiver) = tokio::sync::mpsc::channel(16);
-    let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+) -> anyhow::Result<(TpuClientNextSender, solana_tpu_client_next::Client)> {
     let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
-    let broadcaster_task = crate::broadcaster::run(blocklist_key, rpc, cancel.clone());
-    let tpu_scheduler_task = tokio::spawn({
-        async move {
-            let config = ConnectionWorkersSchedulerConfig {
-                bind: BindTarget::Socket(udp_sock),
-                stake_identity: Some(StakeIdentity::new(&validator_identity)),
-                // to match MAX_CONNECTIONS from ConnectionCache
-                num_connections: 1024,
-                skip_check_transaction_age: true,
-                worker_channel_size,
-                max_reconnect_attempts,
-                leaders_fanout: Fanout {
-                    connect: leader_forward_count as usize + 1,
-                    send: leader_forward_count as usize,
-                },
-            };
-            let scheduler = ConnectionWorkersScheduler::new(
-                leader_updater,
-                receiver,
-                update_certificate_receiver,
-                cancel.clone(),
-            );
-            let _metrics_handle = tokio::spawn(send_metrics_stats(
-                scheduler.get_stats().clone(),
-                metrics_update_interval_secs,
-            ));
-            tokio::select! {
-                _ = cancel.cancelled() => {},
-                _ = scheduler.run_with_broadcaster::<MevProtectedBroadcaster>(config) => {
-                    info!("tpu client next scheduler exited");
-                }
-            };
-            info!("exiting tpu client next scheduler")
-        }
-    });
-    let tasks = futures_util::future::try_join(tpu_scheduler_task, broadcaster_task);
-    (TpuClientNextSender { sender }, tasks)
+    let (sender, client) = ClientBuilder::new(leader_updater)
+        .cancel_token(cancel.child_token())
+        .bind_socket(udp_sock)
+        .identity(Some(&validator_identity))
+        .max_reconnect_attempts(1024)
+        .worker_channel_size(worker_channel_size)
+        .metric_reporter(send_metrics_stats)
+        .max_reconnect_attempts(max_reconnect_attempts)
+        .leader_send_fanout(leader_fan_out)
+        .broadcaster(broadcaster)
+        .build()?;
+    Ok((TpuClientNextSender { inner: sender }, client))
 }
 
 impl SendTransactionClient for TpuClientNextSender {
@@ -97,23 +58,39 @@ impl SendTransactionClient for TpuClientNextSender {
             MEV_PROTECT_FALSE_PREFIX
         };
         wire_transactions.push(bytes::Bytes::from(prefix));
-        let txn_batch = TransactionBatch::new(wire_transactions);
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(txn_batch).await {
-                error!("Failed to send transaction: {:?}", e);
-                counter!("iris_error", "type" => "cannot_send_local").increment(1);
+        match self.inner.try_send_transactions_in_batch(wire_transactions) {
+            Ok(_) => {
+                counter!("iris_tx_send_to_tpu_client_success").increment(1);
             }
-        });
+            Err(ClientError::TrySendError(TrySendError::Closed(_))) => {
+                //critical error
+                error!("cannot send transactions, channel close");
+                counter!("iris_tx_try_send_error_channel_closed").increment(1);
+            }
+            Err(ClientError::FailedToUpdateIdentity) => {
+                counter!("iris_tx_failed_to_update_identity").increment(1);
+            }
+            Err(ClientError::JoinError(_)) => {
+                counter!("iris_tx_join_error").increment(1);
+            }
+            Err(ClientError::ConnectionWorkersSchedulerError(err)) => {
+                error!("connection worker scheduler error {err:?}");
+                counter!("iris-connection_worker_scheduler_error").increment(1);
+            }
+            Err(ClientError::TrySendError(TrySendError::Full(_))) => {
+                warn!("tpu client channel full");
+                counter!("iris_tx_try_send_error_channel_full").increment(1);
+            }
+            Err(ClientError::SendError(_)) => {
+                counter!("iris_tx_send_error_channel_failed").increment(1);
+            }
+        }
     }
 }
 
-pub async fn send_metrics_stats(
-    stats: Arc<SendTransactionStats>,
-    metrics_update_interval_secs: u64,
-) {
-    let mut tick = tokio::time::interval(Duration::from_secs(metrics_update_interval_secs));
-    loop {
+pub async fn send_metrics_stats(stats: Arc<SendTransactionStats>, cancel: CancellationToken) {
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    while !cancel.is_cancelled() {
         tick.tick().await;
         gauge!("iris_tpu_client_next_successfully_sent")
             .set(stats.successfully_sent.load(atomic::Ordering::Relaxed) as f64);

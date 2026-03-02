@@ -1,4 +1,5 @@
 #![warn(unused_crate_dependencies)]
+use crate::broadcaster::MevProtectedBroadcaster;
 use crate::chain_state::ChainStateWsClient;
 use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
@@ -6,7 +7,6 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use anyhow::anyhow;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
@@ -17,7 +17,8 @@ use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::read_keypair_file;
-use solana_tpu_client_next::leader_updater::create_leader_updater;
+use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
+use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::process;
@@ -62,7 +63,7 @@ pub struct Config {
     //The number of slots to look ahead during the leader estimation procedure.
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
-    leaders_fanout: u64,
+    leaders_fanout: u8,
     use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
     metrics_update_interval_secs: u64,
@@ -123,9 +124,9 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to install recorder/exporter");
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    let tpu_client_cancel = CancellationToken::new();
+    let cancel = CancellationToken::new();
 
-    let mut gossip_task = if let Some(port_range) = config.gossip_port_range {
+    let _gossip_task = if let Some(port_range) = config.gossip_port_range {
         let gossip_keypair = config
             .gossip_keypair_file
             .as_ref()
@@ -141,22 +142,34 @@ async fn main() -> anyhow::Result<()> {
 
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     info!("creating leader updater...");
-    let leader_updater = create_leader_updater(rpc.clone(), config.ws_url.to_owned(), None)
-        .await
-        .map_err(|e| anyhow!(e))?;
+    let tpu_cache_config = LeaderTpuCacheServiceConfig {
+        lookahead_leaders: config.leaders_fanout + 1,
+        refresh_nodes_info_every: Default::default(),
+        max_consecutive_failures: 10,
+    };
+    let leader_updater = WebsocketNodeAddressService::run(
+        rpc.clone(),
+        config.ws_url.clone(),
+        tpu_cache_config,
+        cancel.clone(),
+    )
+    .await
+    .expect("Failed to start leader updater");
     info!("leader updater created");
     let txn_store = Arc::new(store::TransactionStoreImpl::new());
-    let (tx_client, tpu_client_jh) = tpu_next_client::spawn_tpu_client_send_txs(
-        leader_updater,
-        config.leaders_fanout,
+    let (mev_protected_broadcaster, _broadcaster_jh) =
+        MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
+
+    let (tx_client, _client) = tpu_next_client::spawn_tpu_client_next(
+        mev_protected_broadcaster,
+        Box::new(leader_updater),
+        config.leaders_fanout as usize,
         identity_keypair,
-        rpc.clone(),
-        shield_policy_key,
-        config.metrics_update_interval_secs,
         config.worker_channel_size,
         config.max_reconnect_attempts,
-        tpu_client_cancel.clone(),
-    );
+        cancel.clone(),
+    )
+    .expect("cannot create tpu client next");
     let ws_client = PubsubClient::new(&config.ws_url)
         .await
         .expect("Failed to connect to websocket");
@@ -193,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     info!("server starting in {:?}", config.address);
-    let server_hdl = server.start(iris.into_rpc());
+    let _server_hdl = server.start(iris.into_rpc());
     // if the solana rpc server connection is lost, the server will exit
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
