@@ -120,6 +120,7 @@ fn spawn_retry_loop(
     chain_state: Arc<dyn ChainStateClient>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
+    const TXN_EXPIRY_DURATION: Duration = Duration::from_secs(120);
     std::thread::Builder::new()
         .name("dedup_retry_loop".to_string())
         .spawn(move || {
@@ -144,7 +145,7 @@ fn spawn_retry_loop(
                         to_remove.insert(txn.key().clone());
                     }
                     //check if transaction has been in the store for too long
-                    if txn.value().received_ts.elapsed() > Duration::from_secs(60) {
+                    if txn.value().received_ts.elapsed() > TXN_EXPIRY_DURATION {
                         to_remove.insert(txn.key().clone());
                     }
                     //check if max retries has been reached
