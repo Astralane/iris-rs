@@ -1,16 +1,16 @@
 use crate::types::SendTransactionClient;
+use anyhow::Context;
 use bitflags::bitflags;
 use bytes::{BufMut, Bytes, BytesMut};
 use metrics::{counter, gauge};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
+use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use solana_tpu_client_next::{ClientBuilder, ClientError, SendTransactionStats};
 use std::sync::{atomic, Arc};
 use std::time::Duration;
-use anyhow::Context;
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::sync::CancellationToken;
@@ -89,7 +89,8 @@ pub fn spawn_tpu_client_next(
     max_reconnect_attempts: usize,
     cancel: CancellationToken,
 ) -> anyhow::Result<(TpuClientNextSender, solana_tpu_client_next::Client)> {
-    let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
+    let udp_sock =
+        std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
 
     let leader_updater = tpu_client_rt
         .block_on(WebsocketNodeAddressService::run(

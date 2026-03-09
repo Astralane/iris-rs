@@ -1,4 +1,5 @@
 use crate::dedup_and_retry::DedupPacketPayload;
+use crate::runtime::{build_runtime, TokioRtConfig};
 use crate::types::{PacketSource, TransactionPacket};
 use crossbeam_channel::Sender;
 use metrics::{counter, histogram};
@@ -21,16 +22,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
 const MAX_PACKET_SIZE: usize = PACKET_DATA_SIZE;
-
-pub struct QuicServerResult {
-    server_t: std::thread::JoinHandle<()>,
-}
-
-impl QuicServerResult {
-    pub fn join(self) -> std::thread::Result<()> {
-        self.server_t.join()
-    }
-}
 
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
@@ -75,11 +66,11 @@ pub(crate) fn configure_server(
 pub fn spawn_new(
     thread_name: &'static str,
     bind_port: u16,
-    num_threads: usize,
+    rt_config: TokioRtConfig,
     identity_keypair: &Keypair,
     dedup_sender: Sender<DedupPacketPayload>,
     cancel: CancellationToken,
-) -> anyhow::Result<QuicServerResult> {
+) -> anyhow::Result<()> {
     let sock = UdpSocket::bind(("0.0.0.0", bind_port)).map_err(anyhow::Error::msg)?;
     sock.set_nonblocking(true)?;
 
@@ -92,18 +83,13 @@ pub fn spawn_new(
         Arc::new(TokioRuntime),
     )
     .map_err(anyhow::Error::msg)?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("quic-server-rt")
-        .worker_threads(num_threads)
-        .enable_all()
-        .build()
-        .expect("failed to build tokio runtime");
+    let rt = build_runtime("quic-server-rt", &rt_config);
 
     let server_handle = {
         let _guard = rt.enter();
         tokio::spawn(quic_server_loop(endpoint, dedup_sender, cancel))
     };
-    let server_t = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name(thread_name.into())
         .spawn(move || {
             if let Err(e) = rt.block_on(server_handle) {
@@ -111,7 +97,7 @@ pub fn spawn_new(
             }
         })
         .unwrap();
-    Ok(QuicServerResult { server_t })
+    Ok(())
 }
 
 async fn quic_server_loop(

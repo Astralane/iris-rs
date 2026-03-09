@@ -1,3 +1,4 @@
+use crate::runtime::{build_runtime, TokioRtConfig};
 use crate::types::{generate_random_string, ChainStateClient};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
@@ -10,7 +11,7 @@ use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -63,14 +64,9 @@ pub fn spawn_chain_state_updater(
     retain_slot_count: u64,
     ws_url: String,
     grpc_url: Option<String>,
-    shutdown: Arc<AtomicBool>,
+    rt_config: TokioRtConfig,
 ) -> (ChainStateCache, std::thread::JoinHandle<()>) {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("chain-state-worker")
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap();
+    let rt = build_runtime("chain-state-worker", &rt_config);
     let cache = ChainStateCache::new();
     let ws_client = rt
         .block_on(PubsubClient::new(ws_url))
@@ -103,7 +99,6 @@ pub fn spawn_chain_state_updater(
         .name("chain-state-handler".to_string())
         .spawn(move || {
             let _ = rt.block_on(async_task);
-            shutdown.store(true, Ordering::SeqCst);
         })
         .unwrap();
     (cache, handle)

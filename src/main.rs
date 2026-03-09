@@ -8,6 +8,7 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
+use crate::runtime::{build_runtime, TokioRtConfig};
 use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
@@ -38,6 +39,7 @@ mod otel_tracer;
 mod quic_server;
 mod rpc;
 mod rpc_server;
+mod runtime;
 mod shield;
 mod store;
 mod tpu_next_client;
@@ -56,7 +58,9 @@ pub struct Config {
     grpc_url: Option<String>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
-    tpu_client_num_threads: Option<usize>,
+    /// Runtime config for the TPU client (default: 2 threads, no pinning).
+    /// Env: TPU_CLIENT_RT__NUM_THREADS, TPU_CLIENT_RT__CPUS
+    tpu_client_rt: Option<TokioRtConfig>,
     //The size of the channel used to transmit transaction batches to the worker tasks.
     worker_channel_size: usize,
     //The maximum number of reconnection attempts allowed in case of connection failure.
@@ -69,11 +73,18 @@ pub struct Config {
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
-    rpc_num_threads: Option<usize>,
+    /// Runtime config for the JSON-RPC server (default: 4 threads, no pinning).
+    /// Env: RPC_RT__NUM_THREADS, RPC_RT__CPUS
+    rpc_rt: Option<TokioRtConfig>,
     gossip_keypair_file: Option<String>,
     gossip_port_range: Option<(u16, u16)>,
-    quic_server_threads: Option<usize>,
+    /// Runtime config for the QUIC server (default: 2 threads, no pinning).
+    /// Env: QUIC_RT__NUM_THREADS, QUIC_RT__CPUS
+    quic_rt: Option<TokioRtConfig>,
     quic_bind_port: Option<u16>,
+    /// Runtime config for the chain-state updater (default: 2 threads, no pinning).
+    /// Env: CHAIN_STATE_RT__NUM_THREADS, CHAIN_STATE_RT__CPUS
+    chain_state_rt: Option<TokioRtConfig>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -85,8 +96,10 @@ fn main() -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     //read config from env variables
+    // `__` in an env var name is treated as a nested field separator, e.g.
+    // TPU_CLIENT_RT__NUM_THREADS=4  →  config.tpu_client_rt.num_threads = 4
     let config: Config = Figment::new()
-        .merge(Env::raw())
+        .merge(Env::raw().split("__"))
         .extract()
         .expect("config not valid");
 
@@ -149,12 +162,13 @@ fn main() -> anyhow::Result<()> {
     let (mev_protected_broadcaster, _broadcaster_jh) =
         MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
 
-    let tpu_client_rt = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("tpu_client_next_rt")
-        .worker_threads(config.tpu_client_num_threads.unwrap_or(2))
-        .enable_all()
-        .build()
-        .expect("cannot create runtime");
+    let tpu_client_rt = build_runtime(
+        "tpu_client_next_rt",
+        &config.tpu_client_rt.unwrap_or(TokioRtConfig {
+            num_threads: 2,
+            cpus: vec![],
+        }),
+    );
 
     let (tpu_sender, _client) = tpu_next_client::spawn_tpu_client_next(
         mev_protected_broadcaster,
@@ -175,7 +189,10 @@ fn main() -> anyhow::Result<()> {
         800, // around 4 mins
         config.ws_url,
         config.grpc_url,
-        shutdown.clone(),
+        config.chain_state_rt.unwrap_or(TokioRtConfig {
+            num_threads: 2,
+            cpus: vec![],
+        }),
     );
 
     let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(2 * 1024);
@@ -187,44 +204,42 @@ fn main() -> anyhow::Result<()> {
         cancel.clone(),
     );
 
-    let maybe_quic_server = if let Some((num_thread, bind_port)) =
-        config.quic_server_threads.zip(config.quic_bind_port)
-    {
-        info!("running with quic server at port {bind_port:?}");
-        Some(quic_server::spawn_new(
-            "iris-quic-server",
-            bind_port,
-            num_thread,
-            &Keypair::new(),
-            dedup_sender.clone(),
-            cancel.clone(),
-        )?)
-    } else {
-        info!("running without quic server");
-        None
-    };
+    let _maybe_quic_server =
+        if let Some((quic_rt_config, bind_port)) = config.quic_rt.zip(config.quic_bind_port) {
+            info!("running with quic server at port {bind_port:?}");
+            Some(quic_server::spawn_new(
+                "iris-quic-server",
+                bind_port,
+                quic_rt_config,
+                &Keypair::new(),
+                dedup_sender.clone(),
+                cancel.clone(),
+            )?)
+        } else {
+            info!("running without quic server");
+            None
+        };
 
     info!("server starting in {:?}", config.address);
-    let rpc_t = spawn_json_rpc_server(
-        config.rpc_num_threads.unwrap_or(4),
+    let _rpc_t = spawn_json_rpc_server(
+        config.rpc_rt.unwrap_or(TokioRtConfig {
+            num_threads: 4,
+            cpus: vec![],
+        }),
         dedup_sender,
         config.address,
         cancel.clone(),
     );
-    // if the solana rpc server connection is lost, `chain_update_t_handler` will make this true
-    info!("waiting for shutdown signal");
-    while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    cancel.cancel();
+    // Block until chain state disconnects — it is a critical component and its exit
+    // signals the whole process to shut down. The service manager will restart us.
+    info!("waiting for chain state to exit");
     chain_update_t_handle
         .join()
         .expect("chain update join failed");
-    if let Some(quic_server) = maybe_quic_server {
-        quic_server.join().expect("quic server thread join failed");
-    }
-    rpc_t.join().expect("rpc thread join failed");
-    tpu_client_rt.shutdown_timeout(Duration::from_secs(1));
+    tracing::error!("chain state exited — initiating shutdown");
+    cancel.cancel();
+    // Also signal the gossip service which uses the AtomicBool directly.
+    shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
     dedup_and_retry_t
         .join()
         .expect("dedup_and_retry thread join failed");
@@ -232,7 +247,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn spawn_json_rpc_server(
-    rpc_num_threads: usize,
+    rt_config: TokioRtConfig,
     dedup_sender: Sender<DedupPacketPayload>,
     bind_address: SocketAddr,
     cancel: CancellationToken,
@@ -240,12 +255,7 @@ fn spawn_json_rpc_server(
     std::thread::Builder::new()
         .name("rpc-t".to_string())
         .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .thread_name("json_rpc_next_rt")
-                .worker_threads(rpc_num_threads)
-                .enable_all()
-                .build()
-                .expect("cannot build rt");
+            let rt = build_runtime("json_rpc_next_rt", &rt_config);
             rt.block_on(async move {
                 let json_rpc = IrisRpcServerImpl::new(dedup_sender);
                 let server_config = ServerConfig::builder()

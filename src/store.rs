@@ -35,7 +35,7 @@ impl TransactionStoreImpl {
     }
     pub(crate) fn remove_transaction(&self, signature: Signature) -> Option<TransactionContext> {
         let transaction = self.transactions.remove(&signature);
-        transaction.map( |t| t.1)
+        transaction.map(|t| t.1)
     }
     pub(crate) fn get_transactions(&self) -> Arc<DashMap<Signature, TransactionContext>> {
         self.transactions.clone()
