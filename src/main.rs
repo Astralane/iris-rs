@@ -263,7 +263,8 @@ fn spawn_json_rpc_server(
         .name("rpc-t".to_string())
         .spawn(move || {
             let rt = build_runtime("json_rpc_next_rt", &rt_config);
-            rt.block_on(async move {
+            let _guard = rt.enter();
+            let task = async move {
                 let json_rpc = IrisRpcServerImpl::new(dedup_sender);
                 let server_config = ServerConfig::builder()
                     .max_request_body_size(4 * 1024) // 4kb
@@ -279,7 +280,8 @@ fn spawn_json_rpc_server(
                     .unwrap();
                 server.start(json_rpc.into_rpc());
                 cancel.cancelled().await;
-            })
+            };
+            rt.block_on(task)
         })
         .unwrap()
 }
