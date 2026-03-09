@@ -144,8 +144,9 @@ async fn main() -> anyhow::Result<()> {
     info!("creating leader updater...");
     let tpu_cache_config = LeaderTpuCacheServiceConfig {
         lookahead_leaders: config.leaders_fanout + 1,
-        refresh_nodes_info_every: Default::default(),
+        refresh_nodes_info_every:  Duration::from_secs(5 * 60),
         max_consecutive_failures: 10,
+
     };
     let leader_updater = WebsocketNodeAddressService::run(
         rpc.clone(),
