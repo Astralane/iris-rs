@@ -92,6 +92,9 @@ pub fn spawn_tpu_client_next(
     let udp_sock =
         std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
 
+    // enter() ensures tokio::spawn is available for both WebsocketNodeAddressService::run
+    // and ClientBuilder::build(), which both spawn internal tasks.
+    let _guard = tpu_client_rt.enter();
     let leader_updater = tpu_client_rt
         .block_on(WebsocketNodeAddressService::run(
             rpc.clone(),
