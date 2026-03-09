@@ -90,7 +90,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
                 }
             }
         }
-        counter!("iris_txn_total_transactions").increment(1);
         Ok(signature.to_string())
     }
 }

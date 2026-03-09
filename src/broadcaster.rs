@@ -8,6 +8,7 @@ use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError};
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +19,7 @@ use tracing::{debug, info, warn};
 
 const REFRESH_LIST_DURATION: Duration = Duration::from_secs(10 * 60); // 10 mins
 
-pub struct MevProtectedBroadcaster(Arc<ArcSwap<Vec<SocketAddr>>>);
+pub struct MevProtectedBroadcaster(Arc<ArcSwap<HashSet<SocketAddr>>>);
 impl MevProtectedBroadcaster {
     pub fn run(
         key: Pubkey,
@@ -27,7 +28,7 @@ impl MevProtectedBroadcaster {
     ) -> (Self, JoinHandle<()>) {
         let shield = YellowstoneShieldProvider::new(key, rpc);
         let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
-        let blocked_addrs = Arc::new(ArcSwap::from_pointee(vec![]));
+        let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
         let refresh_handle = tokio::spawn({
             let blocked_addrs = blocked_addrs.clone();
             async move {
@@ -41,7 +42,7 @@ impl MevProtectedBroadcaster {
                         _ = interval.tick() => {
                             match timeout(TIMEOUT, shield.get_blocked_ips()).await {
                                 Ok(Ok(blocked_leaders)) => {
-                                    blocked_addrs.store(Arc::new(blocked_leaders));
+                                    blocked_addrs.store(Arc::new(blocked_leaders.into_iter().collect()));
                                     info!("Updated blocked leaders: {:?}", blocked_addrs.load());
                                 }
                                 Ok(Err(e)) => {
@@ -77,7 +78,6 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
             transaction_batch
                 .into_iter()
                 .filter_map(TpuClientPayload::decode)
-                .into_iter()
                 .filter(|payload| !payload.is_mev_protected())
                 .map(|payload| payload.wire_transaction())
                 .collect()

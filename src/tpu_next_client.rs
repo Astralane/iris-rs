@@ -76,6 +76,7 @@ pub fn spawn_tpu_client_next(
     broadcaster: impl WorkersBroadcaster + 'static,
     leader_updater: Box<dyn LeaderUpdater>,
     leader_fan_out: usize,
+    num_connections: usize,
     validator_identity: Keypair,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
@@ -86,11 +87,11 @@ pub fn spawn_tpu_client_next(
         .cancel_token(cancel.child_token())
         .bind_socket(udp_sock)
         .identity(Some(&validator_identity))
-        .max_reconnect_attempts(1024)
         .worker_channel_size(worker_channel_size)
         .metric_reporter(send_metrics_stats)
         .max_reconnect_attempts(max_reconnect_attempts)
         .leader_send_fanout(leader_fan_out)
+        .max_cache_size(num_connections)
         .broadcaster(broadcaster)
         .build()?;
     Ok((TpuClientNextSender { inner: sender }, client))

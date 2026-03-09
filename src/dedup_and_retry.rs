@@ -5,6 +5,7 @@ use agave_transaction_view::transaction_view::TransactionView;
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use metrics::{counter, gauge, histogram};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -122,13 +123,13 @@ fn spawn_retry_loop(
     std::thread::Builder::new()
         .name("dedup_retry_loop".to_string())
         .spawn(move || {
+            let mut to_remove = HashSet::new();
+            let mut to_retry = vec![];
             loop {
                 if cancel.is_cancelled() {
                     break;
                 }
                 let transactions_map = store.get_transactions();
-                let mut to_remove = vec![];
-                let mut to_retry = vec![];
                 gauge!("iris_retry_transactions").set(transactions_map.len() as f64);
 
                 for mut txn in transactions_map.iter_mut() {
@@ -140,15 +141,15 @@ fn spawn_retry_loop(
                         counter!("iris_txn_landed").increment(1);
                         histogram!("iris_txn_slot_latency")
                             .record(slot.saturating_sub(txn.slot) as f64);
-                        to_remove.push(txn.key().clone());
+                        to_remove.insert(txn.key().clone());
                     }
                     //check if transaction has been in the store for too long
                     if txn.value().received_ts.elapsed() > Duration::from_secs(60) {
-                        to_remove.push(txn.key().clone());
+                        to_remove.insert(txn.key().clone());
                     }
                     //check if max retries has been reached
                     if txn.retry_count == 0 {
-                        to_remove.push(txn.key().clone());
+                        to_remove.insert(txn.key().clone());
                     }
                     if txn.retry_count > 0 {
                         to_retry.push(TpuClientPayload::new(
@@ -160,7 +161,7 @@ fn spawn_retry_loop(
                 }
 
                 gauge!("iris_transactions_removed").increment(to_remove.len() as f64);
-                for signature in to_remove {
+                for signature in to_remove.drain() {
                     store.remove_transaction(signature);
                 }
 

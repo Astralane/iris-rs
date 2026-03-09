@@ -55,11 +55,8 @@ pub struct Config {
     address: SocketAddr,
     identity_keypair_file: Option<String>,
     grpc_url: Option<String>,
-    tx_max_retries: u32,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
-    //Whether to skip checking the transaction blockhash expiration.
-    skip_check_transaction_age: bool,
     //The size of the channel used to transmit transaction batches to the worker tasks.
     worker_channel_size: usize,
     //The maximum number of reconnection attempts allowed in case of connection failure.
@@ -68,13 +65,10 @@ pub struct Config {
     //Determines how far into the future leaders are estimated,
     //allowing connections to be established with those leaders in advance.
     leaders_fanout: u8,
-    use_tpu_client_next: bool,
     prometheus_addr: SocketAddr,
-    metrics_update_interval_secs: u64,
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
-    dedup_cache_max_size: usize,
     gossip_keypair_file: Option<String>,
     gossip_port_range: Option<(u16, u16)>,
     quic_server_threads: Option<usize>,
@@ -101,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
             let subscriber = get_subscriber_with_otpl(
                 env_filter,
                 endpoint,
-                config.address.port().clone(),
+                config.address.port(),
                 std::io::stdout,
             )
             .await;
@@ -169,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
         mev_protected_broadcaster,
         Box::new(leader_updater),
         config.leaders_fanout as usize,
+        config.num_connections as usize,
         identity_keypair,
         config.worker_channel_size,
         config.max_reconnect_attempts,
