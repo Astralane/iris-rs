@@ -6,13 +6,13 @@ use solana_gossip::contact_info::ContactInfo;
 use solana_gossip::gossip_service::GossipService;
 use solana_gossip::node::Node;
 use solana_net_utils::multihomed_sockets::BindIpAddrs;
+use solana_net_utils::SocketAddrSpace;
 use solana_sdk::signature::{Keypair, Signer};
 use solana_sdk::timing::timestamp;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use solana_net_utils::SocketAddrSpace;
 use tracing::info;
 
 const ENTRYPOINTS: [&str; 5] = [
@@ -80,7 +80,6 @@ fn make_gossip_service(
         public_tpu_addr: None,
         public_tpu_forwards_addr: None,
         public_tvu_addr: None,
-        vortexor_receiver_addr: None,
         num_tvu_receive_sockets: 1.try_into().unwrap(),
         num_tvu_retransmit_sockets: 1.try_into().unwrap(),
         num_quic_endpoints: 1.try_into().unwrap(),

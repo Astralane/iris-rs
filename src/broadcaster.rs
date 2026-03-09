@@ -1,4 +1,5 @@
 use crate::shield::YellowstoneShieldProvider;
+use crate::tpu_next_client::TpuClientPayload;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -7,6 +8,7 @@ use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError};
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +19,7 @@ use tracing::{debug, info, warn};
 
 const REFRESH_LIST_DURATION: Duration = Duration::from_secs(10 * 60); // 10 mins
 
-pub struct MevProtectedBroadcaster(Arc<ArcSwap<Vec<SocketAddr>>>);
+pub struct MevProtectedBroadcaster(Arc<ArcSwap<HashSet<SocketAddr>>>);
 impl MevProtectedBroadcaster {
     pub fn run(
         key: Pubkey,
@@ -26,7 +28,7 @@ impl MevProtectedBroadcaster {
     ) -> (Self, JoinHandle<()>) {
         let shield = YellowstoneShieldProvider::new(key, rpc);
         let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
-        let blocked_addrs = Arc::new(ArcSwap::from_pointee(vec![]));
+        let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
         let refresh_handle = tokio::spawn({
             let blocked_addrs = blocked_addrs.clone();
             async move {
@@ -40,7 +42,7 @@ impl MevProtectedBroadcaster {
                         _ = interval.tick() => {
                             match timeout(TIMEOUT, shield.get_blocked_ips()).await {
                                 Ok(Ok(blocked_leaders)) => {
-                                    blocked_addrs.store(Arc::new(blocked_leaders));
+                                    blocked_addrs.store(Arc::new(blocked_leaders.into_iter().collect()));
                                     info!("Updated blocked leaders: {:?}", blocked_addrs.load());
                                 }
                                 Ok(Err(e)) => {
@@ -69,27 +71,25 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
-        // the last element value shows if this transaction batch requires MEV protection,
-        // the actual transactions are everything, but the last element
-        // not the best way but done due to limitation on tpu-client-next.
-        let tx_batch = transaction_batch.clone().into_iter();
-        let Some((prefix_bytes, wire_transactions)) = tx_batch.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            return Ok(());
-        };
-        // convert the bytes to a boolean
-        let mev_protect = matches!(prefix_bytes.first(), Some(1));
-        let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
-        let blocked_leaders = self.0.load().clone();
+        let blocked_leaders = self.0.load();
+        let is_blocked_leader_slot = leaders.first().is_some_and(|l| blocked_leaders.contains(l));
 
-        //if the current or next leader is in the blocklist don't send the transactions
-        if mev_protect {
-            if let Some(leader) = leaders.first() {
-                if blocked_leaders.contains(leader) {
-                    return Ok(());
-                }
-            }
-        }
+        let batch = if is_blocked_leader_slot {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .filter(|payload| !payload.is_mev_protected())
+                .map(|payload| payload.wire_transaction())
+                .collect()
+        } else {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .map(|payload| payload.wire_transaction())
+                .collect()
+        };
+
+        let transaction_batch = TransactionBatch::new(batch);
 
         for (_, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {

@@ -1,4 +1,4 @@
-use crate::utils::{generate_random_string, ChainStateClient};
+use crate::types::{generate_random_string, ChainStateClient};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use metrics::gauge;
@@ -9,10 +9,10 @@ use solana_sdk::signature::Signature;
 use solana_transaction_status::TransactionDetails::Signatures;
 use solana_transaction_status::UiTransactionEncoding::Base64;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
@@ -51,76 +51,88 @@ macro_rules! block_subscribe_request {
 }
 
 //Signature and slot number the transaction was confirmed
-type SignatureStore = DashMap<String, u64>;
+type SignatureStore = DashMap<Signature, u64>;
 
-pub struct ChainStateWsClient {
+pub struct ChainStateCache {
     slot: Arc<AtomicU64>,
     // signature -> (block_time, slot)
     signature_store: Arc<SignatureStore>,
-    _thread_hdls: Vec<JoinHandle<()>>,
 }
 
-impl ChainStateWsClient {
-    pub fn new(
-        runtime: Handle,
-        shutdown: Arc<AtomicBool>,
-        retain_slot_count: u64,
-        ws_client: Arc<PubsubClient>,
-        grpc_url: Option<String>,
-    ) -> Self {
-        let current_slot = Arc::new(AtomicU64::new(0));
-        let signature_store = Arc::new(DashMap::new());
-        let mut hdl = Vec::new();
-        let block_listener_hdl = if let Some(grpc_url) = grpc_url {
-            spawn_grpc_block_listener(
-                runtime.clone(),
-                shutdown.clone(),
-                signature_store.clone(),
-                retain_slot_count,
-                grpc_url,
-            )
+pub fn spawn_chain_state_updater(
+    retain_slot_count: u64,
+    ws_url: String,
+    grpc_url: Option<String>,
+    shutdown: Arc<AtomicBool>,
+) -> (ChainStateCache, std::thread::JoinHandle<()>) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("chain-state-worker")
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let cache = ChainStateCache::new();
+    let ws_client = rt
+        .block_on(PubsubClient::new(ws_url))
+        .expect("Failed to create pubsub client");
+    let ws_client = Arc::new(ws_client);
+    let async_task = {
+        let _guard = rt.enter();
+        let mut block_listen_task = if let Some(grpc_url) = grpc_url {
+            spawn_grpc_block_listener(cache.signature_store.clone(), retain_slot_count, grpc_url)
         } else {
             spawn_ws_block_listener(
-                runtime.clone(),
-                shutdown.clone(),
-                signature_store.clone(),
+                cache.signature_store.clone(),
                 retain_slot_count,
                 ws_client.clone(),
             )
         };
-        hdl.push(block_listener_hdl);
-        hdl.push(spawn_ws_slot_listener(
-            runtime.clone(),
-            shutdown,
-            current_slot.clone(),
-            ws_client,
-        ));
+        let mut slot_listen_task = spawn_ws_slot_listener(cache.slot.clone(), ws_client);
+        async move {
+            tokio::select! {
+                r = &mut block_listen_task => {
+                    error!("block_listen_task exited: {r:?}");
+                }
+                r = &mut slot_listen_task => {
+                    error!("slot_listen_task exited: {r:?}");
+                }
+            }
+        }
+    };
+    let handle = std::thread::Builder::new()
+        .name("chain-state-handler".to_string())
+        .spawn(move || {
+            let _ = rt.block_on(async_task);
+            shutdown.store(true, Ordering::SeqCst);
+        })
+        .unwrap();
+    (cache, handle)
+}
 
+impl ChainStateCache {
+    pub fn new() -> Self {
         Self {
-            slot: current_slot,
-            signature_store,
-            _thread_hdls: hdl,
+            slot: Arc::new(Default::default()),
+            signature_store: Arc::new(Default::default()),
         }
     }
 }
 
-impl ChainStateClient for ChainStateWsClient {
+impl ChainStateClient for ChainStateCache {
     fn get_slot(&self) -> u64 {
         self.slot.load(Ordering::Relaxed)
     }
 
-    fn confirm_signature_status(&self, signature: &str) -> Option<u64> {
+    fn confirm_signature_status(&self, signature: &Signature) -> Option<u64> {
         self.signature_store.get(signature).map(|v| *v)
     }
 }
 fn spawn_ws_block_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
     ws_client: Arc<PubsubClient>,
 ) -> JoinHandle<()> {
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let config = Some(RpcBlockSubscribeConfig {
             commitment: Some(solana_commitment_config::CommitmentConfig::confirmed()),
             encoding: Some(Base64),
@@ -134,17 +146,15 @@ fn spawn_ws_block_listener(
             .await
         {
             Ok((mut stream, unsub)) => {
-                while !shutdown.load(Ordering::Relaxed) {
+                loop {
                     let block = match timeout(TIMEOUT, stream.next()).await {
                         Ok(Some(block)) => block,
                         Ok(None) => {
                             error!("block updates ended!");
-                            shutdown.store(true, Ordering::Relaxed);
                             break;
                         }
                         Err(_) => {
                             error!("Timeout waiting for block update");
-                            shutdown.store(true, Ordering::Relaxed);
                             break;
                         }
                     };
@@ -154,8 +164,10 @@ fn spawn_ws_block_listener(
                         let _block_time = block.block_time;
                         debug!("Block update: {:?}", slot);
                         if let Some(signatures) = block.signatures {
-                            for signature in signatures {
-                                signature_store.insert(signature, slot);
+                            for signature_str in signatures {
+                                if let Ok(signature) = Signature::from_str(&signature_str) {
+                                    signature_store.insert(signature, slot);
+                                }
                             }
                         }
                         // remove old signatures to prevent leak of memory < slot - retain_slot_count
@@ -169,7 +181,6 @@ fn spawn_ws_block_listener(
             }
             Err(e) => {
                 error!("Error subscribing to block updates {:?}", e);
-                shutdown.store(true, Ordering::Relaxed);
                 return;
             }
         }
@@ -178,35 +189,29 @@ fn spawn_ws_block_listener(
 }
 
 fn spawn_ws_slot_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
     current_slot: Arc<AtomicU64>,
     ws_client: Arc<PubsubClient>,
 ) -> JoinHandle<()> {
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let subscription = ws_client.slot_updates_subscribe().await.unwrap();
         let (mut stream, unsub) = subscription;
-        while !shutdown.load(Ordering::Relaxed) {
+        loop {
             let slot_update = match timeout(TIMEOUT, stream.next()).await {
                 Ok(Some(update)) => update,
                 Ok(None) => {
                     error!("slot updates ended");
-                    shutdown.store(true, Ordering::Relaxed);
                     break;
                 }
                 Err(_) => {
                     error!("Timeout waiting for slot update");
-                    shutdown.store(true, Ordering::Relaxed);
                     break;
                 }
             };
-            info!("Slot update: {:?}", slot_update);
             let slot = match slot_update {
                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
                 _ => continue,
             };
-            debug!("Slot update: {}", slot);
             gauge!("iris_current_slot").set(slot as f64);
             current_slot.store(slot, Ordering::Relaxed);
         }
@@ -219,20 +224,17 @@ fn spawn_ws_slot_listener(
 }
 
 fn spawn_grpc_block_listener(
-    runtime: Handle,
-    shutdown: Arc<AtomicBool>,
     signature_store: Arc<SignatureStore>,
     retain_slot_count: u64,
     endpoint: String,
 ) -> JoinHandle<()> {
     let max_retries = 5;
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let mut connection_retries = 0;
-        while !shutdown.load(Ordering::Relaxed) {
+        loop {
             connection_retries += 1;
             if connection_retries > max_retries {
                 error!("Max retries reached, shutting down geyser grpc block listener");
-                shutdown.store(true, Ordering::Relaxed);
                 return;
             }
 
@@ -274,7 +276,7 @@ fn spawn_grpc_block_listener(
                 continue;
             }
             connection_retries = 0;
-            while !shutdown.load(Ordering::Relaxed) {
+            loop {
                 let update = match timeout(TIMEOUT, grpc_rx.next()).await {
                     Ok(Some(update)) => update,
                     Ok(None) => {
@@ -292,9 +294,9 @@ fn spawn_grpc_block_listener(
                             let slot = block.slot;
                             debug!("Block update: {:?}", slot);
                             for transaction in block.transactions {
-                                let signature = Signature::try_from(transaction.signature)
-                                    .expect("Invalid signature");
-                                signature_store.insert(signature.to_string(), slot);
+                                if let Ok(signature) = Signature::try_from(transaction.signature) {
+                                    signature_store.insert(signature, slot);
+                                }
                             }
                             // remove old signatures to prevent leak of memory < slot - retain_slot_count
                             signature_store.retain(|_, v| *v > slot - retain_slot_count);
@@ -319,6 +321,5 @@ fn spawn_grpc_block_listener(
                 }
             }
         }
-        warn!("Shutting down grpc block listener thread");
     })
 }

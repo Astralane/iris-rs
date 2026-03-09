@@ -13,12 +13,4 @@ pub trait IrisRpc {
         params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<String>;
-
-    #[method(name = "sendTransactionBatch")]
-    async fn send_transaction_batch(
-        &self,
-        txns: Vec<String>,
-        params: Option<RpcSendTransactionConfig>,
-        mev_protect: Option<bool>,
-    ) -> RpcResult<Vec<String>>;
 }
