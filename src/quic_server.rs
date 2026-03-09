@@ -76,18 +76,20 @@ pub fn spawn_new(
 
     let (config, _cert_chain_pem) =
         configure_server(identity_keypair).map_err(anyhow::Error::msg)?;
-    let endpoint = Endpoint::new(
-        EndpointConfig::default(),
-        Some(config.clone()),
-        sock,
-        Arc::new(TokioRuntime),
-    )
-    .map_err(anyhow::Error::msg)?;
     let rt = build_runtime("quic-server-rt", &rt_config);
 
     let server_handle = {
         let _guard = rt.enter();
-        tokio::spawn(quic_server_loop(endpoint, dedup_sender, cancel))
+        tokio::spawn(async move {
+            let endpoint = Endpoint::new(
+                EndpointConfig::default(),
+                Some(config.clone()),
+                sock,
+                Arc::new(TokioRuntime),
+            )
+            .expect("cannot create endpoint");
+            quic_server_loop(endpoint, dedup_sender, cancel).await
+        })
     };
     std::thread::Builder::new()
         .name(thread_name.into())
