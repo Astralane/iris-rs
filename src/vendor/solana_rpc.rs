@@ -11,7 +11,7 @@ const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
 pub fn decode_transaction(
     encoded: String,
     encoding: TransactionBinaryEncoding,
-) -> RpcResult<bytes::Bytes> {
+) -> RpcResult<Vec<u8>> {
     let wire_output = match encoding {
         TransactionBinaryEncoding::Base58 => {
             if encoded.len() > MAX_BASE58_SIZE {
@@ -40,7 +40,6 @@ pub fn decode_transaction(
                 .map_err(|e| invalid_request(&format!("invalid base64 encoding: {e:?}")))?
         }
     };
-    let wire_output = bytes::Bytes::from(wire_output);
     if wire_output.len() > PACKET_DATA_SIZE {
         return Err(invalid_request(&format!(
             "decoded {} too large: bytes (max: {} bytes)",

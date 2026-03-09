@@ -1,6 +1,7 @@
 #![warn(unused_crate_dependencies)]
 use crate::broadcaster::MevProtectedBroadcaster;
-use crate::chain_state::ChainStateWsClient;
+use crate::chain_state::spawn_chain_state_updater;
+use crate::dedup_and_retry::DedupAndRetry;
 use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
@@ -13,10 +14,9 @@ use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
-use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::read_keypair_file;
+use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use std::fmt::Debug;
@@ -26,16 +26,17 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod broadcaster;
 mod chain_state;
+mod dedup_and_retry;
 mod gossip_service;
 mod http_middleware;
 mod otel_tracer;
+mod quic_server;
 mod rpc;
 mod rpc_server;
 mod shield;
@@ -43,7 +44,6 @@ mod store;
 mod tpu_next_client;
 mod utils;
 mod vendor;
-mod quic_server;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -77,6 +77,8 @@ pub struct Config {
     dedup_cache_max_size: usize,
     gossip_keypair_file: Option<String>,
     gossip_port_range: Option<(u16, u16)>,
+    quic_server_threads: Option<usize>,
+    quic_bind_port: Option<u16>,
 }
 
 #[tokio::main]
@@ -160,11 +162,10 @@ async fn main() -> anyhow::Result<()> {
     .await
     .expect("Failed to start leader updater");
     info!("leader updater created");
-    let txn_store = Arc::new(store::TransactionStoreImpl::new());
     let (mev_protected_broadcaster, _broadcaster_jh) =
         MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
 
-    let (tx_client, _client) = tpu_next_client::spawn_tpu_client_next(
+    let (tpu_sender, _client) = tpu_next_client::spawn_tpu_client_next(
         mev_protected_broadcaster,
         Box::new(leader_updater),
         config.leaders_fanout as usize,
@@ -174,33 +175,46 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     )
     .expect("cannot create tpu client next");
-    let ws_client = PubsubClient::new(&config.ws_url)
-        .await
-        .expect("Failed to connect to websocket");
 
-    let chain_state = ChainStateWsClient::new(
-        Handle::current(),
-        shutdown.clone(),
+    let (chain_state, chain_update_t_handle) = spawn_chain_state_updater(
         800, // around 4 mins
-        Arc::new(ws_client),
+        config.ws_url,
         config.grpc_url,
+        shutdown.clone(),
     );
 
-    let iris = IrisRpcServerImpl::new(
-        Arc::new(tx_client),
-        txn_store,
+    let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(2 * 1024);
+
+    let dedup_and_retry_t = DedupAndRetry::new(
+        tpu_sender,
+        dedup_receiver,
         Arc::new(chain_state),
-        Duration::from_millis(config.tx_retry_interval_ms as u64),
-        shutdown.clone(),
-        config.tx_max_retries,
-        config.dedup_cache_max_size,
+        cancel.clone(),
     );
+
+    let maybe_quic_server = if let Some((num_thread, bind_port)) =
+        config.quic_server_threads.zip(config.quic_bind_port)
+    {
+        info!("running with quic server at port {bind_port:?}");
+        Some(quic_server::spawn_new(
+            "iris-quic-server",
+            bind_port,
+            num_thread,
+            &Keypair::new(),
+            dedup_sender.clone(),
+            cancel.clone(),
+        )?)
+    } else {
+        info!("running without quic server");
+        None
+    };
+
+    let json_rpc = IrisRpcServerImpl::new(dedup_sender);
 
     let server_config = ServerConfig::builder()
         .max_request_body_size(4 * 1024) // 4kb
         .max_connections(10_000)
         .set_keep_alive(Some(Duration::from_secs(60)))
-        .set_tcp_no_delay(true)
         .build();
 
     let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
@@ -210,11 +224,21 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     info!("server starting in {:?}", config.address);
-    let _server_hdl = server.start(iris.into_rpc());
-    // if the solana rpc server connection is lost, the server will exit
+    let _server_hdl = server.start(json_rpc.into_rpc());
+    // if the solana rpc server connection is lost, `chain_update_t_handler` will make this true
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+    cancel.cancel();
+    chain_update_t_handle
+        .join()
+        .expect("chain update join failed");
+    if let Some(quic_server) = maybe_quic_server {
+        quic_server.join().expect("quic server t join failed");
+    }
+    dedup_and_retry_t
+        .join()
+        .expect("dedup_and_retry_t t join failed");
     process::exit(0);
 }

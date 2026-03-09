@@ -1,4 +1,5 @@
 use crate::shield::YellowstoneShieldProvider;
+use crate::tpu_next_client::TpuClientPayload;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -69,27 +70,26 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
-        // the last element value shows if this transaction batch requires MEV protection,
-        // the actual transactions are everything, but the last element
-        // not the best way but done due to limitation on tpu-client-next.
-        let tx_batch = transaction_batch.clone().into_iter();
-        let Some((prefix_bytes, wire_transactions)) = tx_batch.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            return Ok(());
-        };
-        // convert the bytes to a boolean
-        let mev_protect = matches!(prefix_bytes.first(), Some(1));
-        let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
-        let blocked_leaders = self.0.load().clone();
+        let blocked_leaders = self.0.load();
+        let is_blocked_leader_slot = leaders.first().is_some_and(|l| blocked_leaders.contains(l));
 
-        //if the current or next leader is in the blocklist don't send the transactions
-        if mev_protect {
-            if let Some(leader) = leaders.first() {
-                if blocked_leaders.contains(leader) {
-                    return Ok(());
-                }
-            }
-        }
+        let batch = if is_blocked_leader_slot {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .into_iter()
+                .filter(|payload| !payload.is_mev_protected())
+                .map(|payload| payload.wire_transaction())
+                .collect()
+        } else {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .map(|payload| payload.wire_transaction())
+                .collect()
+        };
+
+        let transaction_batch = TransactionBatch::new(batch);
 
         for (_, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
