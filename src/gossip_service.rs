@@ -23,24 +23,18 @@ const ENTRYPOINTS: [&str; 5] = [
     "entrypoint5.mainnet-beta.solana.com:8001",
 ];
 
-pub fn run_gossip_service(
+pub fn spawn_gossip_service(
     port_range: (u16, u16),
     gossip_keypair: Option<Keypair>,
     exit: Arc<AtomicBool>,
-) -> tokio::task::JoinHandle<()> {
-    let gossip_hdl = std::thread::Builder::new()
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
         .name("iris-gossip-t".to_string())
         .spawn(move || {
             let gossip_service = make_gossip_service(port_range, gossip_keypair, exit);
             gossip_service.join().expect("gossip service handle");
         })
-        .expect("failed to spawn gossip service thread");
-
-    tokio::spawn(async move {
-        while !gossip_hdl.is_finished() {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-    })
+        .unwrap()
 }
 
 fn make_gossip_service(

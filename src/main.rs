@@ -130,12 +130,12 @@ fn main() -> anyhow::Result<()> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let cancel = CancellationToken::new();
 
-    let _gossip_task = if let Some(port_range) = config.gossip_port_range {
+    let _gossip_t = if let Some(port_range) = config.gossip_port_range {
         let gossip_keypair = config
             .gossip_keypair_file
             .as_ref()
             .and_then(|file| read_keypair_file(file).ok());
-        Some(gossip_service::run_gossip_service(
+        Some(gossip_service::spawn_gossip_service(
             port_range,
             gossip_keypair,
             shutdown.clone(),
