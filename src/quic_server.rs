@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
-const MAX_PACKET_SIZE: usize = PACKET_DATA_SIZE;
+const QUIC_MAX_SIZE: usize = PACKET_DATA_SIZE + 8;
 
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
@@ -152,7 +152,7 @@ async fn handle_connection(connecting: Connecting, dedup_sender: Sender<DedupPac
 async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPacketPayload>) {
     let now = Instant::now();
     const READ_TIMEOUT: Duration = Duration::from_secs(2);
-    let data = match tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(MAX_PACKET_SIZE)).await {
+    let data = match tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(QUIC_MAX_SIZE)).await {
         Ok(Ok(packet)) => packet,
         Ok(Err(e)) => {
             error!("stream read error {e:?}");
