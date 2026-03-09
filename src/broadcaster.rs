@@ -34,8 +34,8 @@ impl MevProtectedBroadcaster {
                 let blocked_addrs = blocked_addrs.clone();
                 move||{
                     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-                    let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
                     rt.block_on(async move {
+                        let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
                         const TIMEOUT: Duration = Duration::from_secs(10);
                         loop {
                             tokio::select! {
