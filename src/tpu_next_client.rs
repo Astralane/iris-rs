@@ -1,4 +1,4 @@
-use crate::utils::SendTransactionClient;
+use crate::types::SendTransactionClient;
 use bitflags::bitflags;
 use bytes::{BufMut, Bytes, BytesMut};
 use metrics::{counter, gauge};

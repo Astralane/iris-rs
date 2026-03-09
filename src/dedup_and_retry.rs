@@ -1,6 +1,6 @@
 use crate::store::{TransactionContext, TransactionStoreImpl};
 use crate::tpu_next_client::{TpuClientNextSender, TpuClientPayload};
-use crate::utils::{ChainStateClient, PacketSource, SendTransactionClient, TransactionPacket};
+use crate::types::{ChainStateClient, PacketSource, SendTransactionClient, TransactionPacket};
 use agave_transaction_view::transaction_view::TransactionView;
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, RecvTimeoutError};

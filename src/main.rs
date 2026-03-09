@@ -42,7 +42,7 @@ mod rpc_server;
 mod shield;
 mod store;
 mod tpu_next_client;
-mod utils;
+mod types;
 mod vendor;
 
 #[global_allocator]

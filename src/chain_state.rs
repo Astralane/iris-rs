@@ -1,4 +1,4 @@
-use crate::utils::{generate_random_string, ChainStateClient};
+use crate::types::{generate_random_string, ChainStateClient};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use metrics::gauge;

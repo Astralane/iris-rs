@@ -1,6 +1,6 @@
 use crate::dedup_and_retry::DedupPacketPayload;
 use crate::rpc::IrisRpcServer;
-use crate::utils::{PacketSource, TransactionPacket};
+use crate::types::{PacketSource, TransactionPacket};
 use crate::vendor::solana_rpc::decode_transaction;
 use agave_transaction_view::transaction_view::TransactionView;
 use crossbeam_channel::{Sender, TrySendError};

@@ -1,5 +1,5 @@
 use crate::dedup_and_retry::DedupPacketPayload;
-use crate::utils::{PacketSource, TransactionPacket};
+use crate::types::{PacketSource, TransactionPacket};
 use crossbeam_channel::Sender;
 use metrics::{counter, histogram};
 use pem::Pem;
