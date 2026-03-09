@@ -278,8 +278,11 @@ fn spawn_json_rpc_server(
                     .build(bind_address)
                     .await
                     .unwrap();
-                server.start(json_rpc.into_rpc());
-                cancel.cancelled().await;
+                let handle = server.start(json_rpc.into_rpc());
+                tokio::select! {
+                    _ = handle.stopped() => {}
+                    _ = cancel.cancelled() => {}
+                }
             };
             rt.block_on(task)
         })
