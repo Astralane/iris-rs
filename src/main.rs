@@ -145,7 +145,6 @@ fn main() -> anyhow::Result<()> {
     };
 
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
-    info!("creating leader updater...");
     let tpu_cache_config = LeaderTpuCacheServiceConfig {
         lookahead_leaders: config.leaders_fanout + 1,
         refresh_nodes_info_every: Duration::from_secs(5 * 60),

@@ -11,8 +11,8 @@ use solana_tpu_client_next::ConnectionWorkersSchedulerError;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
-use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -27,14 +27,18 @@ impl MevProtectedBroadcaster {
         cancel: CancellationToken,
     ) -> (Self, JoinHandle<()>) {
         let shield = YellowstoneShieldProvider::new(key, rpc);
-        let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
         let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
-        let refresh_handle = tokio::spawn({
-            let blocked_addrs = blocked_addrs.clone();
-            async move {
-                const TIMEOUT: Duration = Duration::from_secs(10);
-                loop {
-                    tokio::select! {
+        let refresh_handle = std::thread::Builder::new()
+            .name("mev-broadcast-refrest".to_string())
+            .spawn({
+                let blocked_addrs = blocked_addrs.clone();
+                move||{
+                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
+                    rt.block_on(async move {
+                        const TIMEOUT: Duration = Duration::from_secs(10);
+                        loop {
+                            tokio::select! {
                         _ = cancel.cancelled() => {
                             warn!("Cancel signal received, exiting");
                             break;
@@ -55,10 +59,11 @@ impl MevProtectedBroadcaster {
                             }
                         }
                     }
+                        }
+                        info!("Exiting blocked leaders refresh task");
+                    })
                 }
-                info!("Exiting blocked leaders refresh task");
-            }
-        });
+            }).unwrap();
         (MevProtectedBroadcaster(blocked_addrs), refresh_handle)
     }
 }
