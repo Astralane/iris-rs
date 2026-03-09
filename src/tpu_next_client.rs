@@ -4,10 +4,14 @@ use bytes::{BufMut, Bytes, BytesMut};
 use metrics::{counter, gauge};
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
-use solana_tpu_client_next::leader_updater::LeaderUpdater;
+use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use solana_tpu_client_next::{ClientBuilder, ClientError, SendTransactionStats};
 use std::sync::{atomic, Arc};
 use std::time::Duration;
+use anyhow::Context;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
@@ -74,7 +78,10 @@ pub struct TpuClientNextSender {
 
 pub fn spawn_tpu_client_next(
     broadcaster: impl WorkersBroadcaster + 'static,
-    leader_updater: Box<dyn LeaderUpdater>,
+    tpu_client_rt: &Handle,
+    rpc: Arc<RpcClient>,
+    ws_url: String,
+    tpu_cache_config: LeaderTpuCacheServiceConfig,
     leader_fan_out: usize,
     num_connections: usize,
     validator_identity: Keypair,
@@ -82,8 +89,19 @@ pub fn spawn_tpu_client_next(
     max_reconnect_attempts: usize,
     cancel: CancellationToken,
 ) -> anyhow::Result<(TpuClientNextSender, solana_tpu_client_next::Client)> {
-    let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("cannot bind tpu client endpoint");
-    let (sender, client) = ClientBuilder::new(leader_updater)
+    let udp_sock = std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
+
+    let leader_updater = tpu_client_rt
+        .block_on(WebsocketNodeAddressService::run(
+            rpc.clone(),
+            ws_url,
+            tpu_cache_config,
+            cancel.clone(),
+        ))
+        .context("cannot create leader updater")?;
+
+    let (sender, client) = ClientBuilder::new(Box::new(leader_updater))
+        .runtime_handle(tpu_client_rt.clone())
         .cancel_token(cancel.child_token())
         .bind_socket(udp_sock)
         .identity(Some(&validator_identity))

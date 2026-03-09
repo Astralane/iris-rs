@@ -1,13 +1,14 @@
 #![warn(unused_crate_dependencies)]
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::chain_state::spawn_chain_state_updater;
-use crate::dedup_and_retry::DedupAndRetry;
+use crate::dedup_and_retry::{DedupAndRetry, DedupPacketPayload};
 use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
+use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
@@ -18,7 +19,6 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
-use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::process;
@@ -26,6 +26,7 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -57,6 +58,7 @@ pub struct Config {
     grpc_url: Option<String>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
+    tpu_client_num_threads: Option<usize>,
     //The size of the channel used to transmit transaction batches to the worker tasks.
     worker_channel_size: usize,
     //The maximum number of reconnection attempts allowed in case of connection failure.
@@ -69,14 +71,14 @@ pub struct Config {
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
+    rpc_num_threads: Option<usize>,
     gossip_keypair_file: Option<String>,
     gossip_port_range: Option<(u16, u16)>,
     quic_server_threads: Option<usize>,
     quic_bind_port: Option<u16>,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
     CryptoProvider::install_default(rustls::crypto::ring::default_provider())
         .expect("Failed to install default crypto provider");
@@ -90,21 +92,19 @@ async fn main() -> anyhow::Result<()> {
         .extract()
         .expect("config not valid");
 
-    match config.otpl_endpoint.clone() {
+    info!("config: {:?}", config);
+    match &config.otpl_endpoint {
         Some(endpoint) => {
             let subscriber = get_subscriber_with_otpl(
                 env_filter,
-                endpoint,
+                endpoint.to_string(),
                 config.address.port(),
                 std::io::stdout,
-            )
-            .await;
+            );
             init_subscriber(subscriber)
         }
         None => init_subscriber_without_signoz(std::io::stdout),
     }
-
-    info!("config: {:?}", config);
 
     let identity_keypair = config
         .identity_keypair_file
@@ -144,25 +144,26 @@ async fn main() -> anyhow::Result<()> {
     info!("creating leader updater...");
     let tpu_cache_config = LeaderTpuCacheServiceConfig {
         lookahead_leaders: config.leaders_fanout + 1,
-        refresh_nodes_info_every:  Duration::from_secs(5 * 60),
+        refresh_nodes_info_every: Duration::from_secs(5 * 60),
         max_consecutive_failures: 10,
-
     };
-    let leader_updater = WebsocketNodeAddressService::run(
-        rpc.clone(),
-        config.ws_url.clone(),
-        tpu_cache_config,
-        cancel.clone(),
-    )
-    .await
-    .expect("Failed to start leader updater");
     info!("leader updater created");
     let (mev_protected_broadcaster, _broadcaster_jh) =
         MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
 
+    let tpu_client_rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("tpu_client_next_rt")
+        .worker_threads(config.tpu_client_num_threads.unwrap_or(2))
+        .enable_all()
+        .build()
+        .expect("cannot create runtime");
+
     let (tpu_sender, _client) = tpu_next_client::spawn_tpu_client_next(
         mev_protected_broadcaster,
-        Box::new(leader_updater),
+        tpu_client_rt.handle(),
+        rpc,
+        config.ws_url.clone(),
+        tpu_cache_config,
         config.leaders_fanout as usize,
         config.num_connections as usize,
         identity_keypair,
@@ -205,26 +206,18 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let json_rpc = IrisRpcServerImpl::new(dedup_sender);
-
-    let server_config = ServerConfig::builder()
-        .max_request_body_size(4 * 1024) // 4kb
-        .max_connections(10_000)
-        .set_keep_alive(Some(Duration::from_secs(60)))
-        .build();
-
-    let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
-    let server = ServerBuilder::with_config(server_config)
-        .set_http_middleware(http_middleware)
-        .build(config.address)
-        .await?;
-
     info!("server starting in {:?}", config.address);
-    let _server_hdl = server.start(json_rpc.into_rpc());
+    let json_rpc_rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("json_rpc_next_rt")
+        .worker_threads(config.rpc_num_threads.unwrap_or(4))
+        .enable_all()
+        .build()
+        .expect("cannot build rt");
+    spawn_json_rpc_server(json_rpc_rt, dedup_sender, config.address);
     // if the solana rpc server connection is lost, `chain_update_t_handler` will make this true
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        std::thread::sleep(Duration::from_secs(1));
     }
     cancel.cancel();
     chain_update_t_handle
@@ -237,4 +230,28 @@ async fn main() -> anyhow::Result<()> {
         .join()
         .expect("dedup_and_retry_t t join failed");
     process::exit(0);
+}
+
+fn spawn_json_rpc_server(
+    rt: Runtime,
+    dedup_sender: Sender<DedupPacketPayload>,
+    bind_address: SocketAddr,
+) {
+    rt.spawn(async move {
+        let json_rpc = IrisRpcServerImpl::new(dedup_sender);
+
+        let server_config = ServerConfig::builder()
+            .max_request_body_size(4 * 1024) // 4kb
+            .max_connections(10_000)
+            .set_keep_alive(Some(Duration::from_secs(60)))
+            .build();
+
+        let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
+        let server = ServerBuilder::with_config(server_config)
+            .set_http_middleware(http_middleware)
+            .build(bind_address)
+            .await
+            .unwrap();
+        server.start(json_rpc.into_rpc());
+    });
 }
