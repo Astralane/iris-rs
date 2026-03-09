@@ -107,31 +107,8 @@ fn main() -> anyhow::Result<()> {
         .extract()
         .expect("config not valid");
 
+    init_tracing(&config, env_filter);
     info!("config: {:?}", config);
-    match &config.otpl_endpoint {
-        Some(endpoint) => {
-            // tonic gRPC batch exporters require a Tokio runtime context at construction time.
-            let otel_rt = build_runtime(
-                "otel-rt",
-                &config.otel_rt.clone().unwrap_or(TokioRtConfig {
-                    num_threads: 1,
-                    cpus: vec![],
-                }),
-            );
-            let _guard = otel_rt.enter();
-            let subscriber = get_subscriber_with_otpl(
-                env_filter,
-                endpoint.to_string(),
-                config.address.port(),
-                std::io::stdout,
-            );
-            // Leak the runtime so it stays alive for the duration of the process —
-            // the batch exporters need it running to flush telemetry on shutdown.
-            std::mem::forget(otel_rt);
-            init_subscriber(subscriber)
-        }
-        None => init_subscriber_without_signoz(std::io::stdout),
-    }
 
     let identity_keypair = config
         .identity_keypair_file
@@ -180,10 +157,7 @@ fn main() -> anyhow::Result<()> {
 
     let tpu_client_rt = build_runtime(
         "tpu_client_next_rt",
-        &config.tpu_client_rt.unwrap_or(TokioRtConfig {
-            num_threads: 2,
-            cpus: vec![],
-        }),
+        &config.tpu_client_rt.unwrap_or(TokioRtConfig::threads(2)),
     );
 
     let (tpu_sender, _client) = tpu_next_client::spawn_tpu_client_next(
@@ -205,10 +179,7 @@ fn main() -> anyhow::Result<()> {
         800, // around 4 mins
         config.ws_url,
         config.grpc_url,
-        config.chain_state_rt.unwrap_or(TokioRtConfig {
-            num_threads: 2,
-            cpus: vec![],
-        }),
+        config.chain_state_rt.unwrap_or(TokioRtConfig::threads(2)),
     );
 
     let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(2 * 1024);
@@ -238,10 +209,7 @@ fn main() -> anyhow::Result<()> {
 
     info!("server starting in {:?}", config.address);
     let _rpc_t = spawn_json_rpc_server(
-        config.rpc_rt.unwrap_or(TokioRtConfig {
-            num_threads: 4,
-            cpus: vec![],
-        }),
+        config.rpc_rt.unwrap_or(TokioRtConfig::threads(4)),
         dedup_sender,
         config.address,
         cancel.clone(),
@@ -260,6 +228,30 @@ fn main() -> anyhow::Result<()> {
         .join()
         .expect("dedup_and_retry thread join failed");
     Ok(())
+}
+
+fn init_tracing(config: &Config, env_filter: EnvFilter) {
+    match &config.otpl_endpoint {
+        Some(endpoint) => {
+            // tonic gRPC batch exporters require a Tokio runtime context at construction time.
+            let otel_rt = build_runtime(
+                "otel-rt",
+                &config.otel_rt.clone().unwrap_or(TokioRtConfig::threads(1)),
+            );
+            let _guard = otel_rt.enter();
+            let subscriber = get_subscriber_with_otpl(
+                env_filter,
+                endpoint.to_string(),
+                config.address.port(),
+                std::io::stdout,
+            );
+            // Leak the runtime so it stays alive for the duration of the process —
+            // the batch exporters need it running to flush telemetry on shutdown.
+            std::mem::forget(otel_rt);
+            init_subscriber(subscriber);
+        }
+        None => init_subscriber_without_signoz(std::io::stdout),
+    }
 }
 
 fn spawn_json_rpc_server(

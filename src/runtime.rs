@@ -19,6 +19,15 @@ pub struct TokioRtConfig {
     pub cpus: Vec<usize>,
 }
 
+impl TokioRtConfig {
+    pub fn threads(n: usize) -> Self {
+        Self {
+            num_threads: n,
+            cpus: vec![],
+        }
+    }
+}
+
 /// Build a `tokio::runtime::Runtime` with optional CPU affinity.
 ///
 /// Each worker thread is pinned to `cpus[thread_index % cpus.len()]` in order.
