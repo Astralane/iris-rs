@@ -21,12 +21,10 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::process;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -207,13 +205,12 @@ fn main() -> anyhow::Result<()> {
     };
 
     info!("server starting in {:?}", config.address);
-    let json_rpc_rt = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("json_rpc_next_rt")
-        .worker_threads(config.rpc_num_threads.unwrap_or(4))
-        .enable_all()
-        .build()
-        .expect("cannot build rt");
-    spawn_json_rpc_server(json_rpc_rt, dedup_sender, config.address);
+    let rpc_t = spawn_json_rpc_server(
+        config.rpc_num_threads.unwrap_or(4),
+        dedup_sender,
+        config.address,
+        cancel.clone(),
+    );
     // if the solana rpc server connection is lost, `chain_update_t_handler` will make this true
     info!("waiting for shutdown signal");
     while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -224,34 +221,48 @@ fn main() -> anyhow::Result<()> {
         .join()
         .expect("chain update join failed");
     if let Some(quic_server) = maybe_quic_server {
-        quic_server.join().expect("quic server t join failed");
+        quic_server.join().expect("quic server thread join failed");
     }
+    rpc_t.join().expect("rpc thread join failed");
+    tpu_client_rt.shutdown_timeout(Duration::from_secs(1));
     dedup_and_retry_t
         .join()
-        .expect("dedup_and_retry_t t join failed");
-    process::exit(0);
+        .expect("dedup_and_retry thread join failed");
+    Ok(())
 }
 
 fn spawn_json_rpc_server(
-    rt: Runtime,
+    rpc_num_threads: usize,
     dedup_sender: Sender<DedupPacketPayload>,
     bind_address: SocketAddr,
-) {
-    rt.spawn(async move {
-        let json_rpc = IrisRpcServerImpl::new(dedup_sender);
+    cancel: CancellationToken,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("rpc-t".to_string())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .thread_name("json_rpc_next_rt")
+                .worker_threads(rpc_num_threads)
+                .enable_all()
+                .build()
+                .expect("cannot build rt");
+            rt.block_on(async move {
+                let json_rpc = IrisRpcServerImpl::new(dedup_sender);
+                let server_config = ServerConfig::builder()
+                    .max_request_body_size(4 * 1024) // 4kb
+                    .max_connections(10_000)
+                    .set_keep_alive(Some(Duration::from_secs(60)))
+                    .build();
 
-        let server_config = ServerConfig::builder()
-            .max_request_body_size(4 * 1024) // 4kb
-            .max_connections(10_000)
-            .set_keep_alive(Some(Duration::from_secs(60)))
-            .build();
-
-        let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
-        let server = ServerBuilder::with_config(server_config)
-            .set_http_middleware(http_middleware)
-            .build(bind_address)
-            .await
-            .unwrap();
-        server.start(json_rpc.into_rpc());
-    });
+                let http_middleware = tower::ServiceBuilder::new().layer_fn(HttpLoggingMiddleware);
+                let server = ServerBuilder::with_config(server_config)
+                    .set_http_middleware(http_middleware)
+                    .build(bind_address)
+                    .await
+                    .unwrap();
+                server.start(json_rpc.into_rpc());
+                cancel.cancelled().await;
+            })
+        })
+        .unwrap()
 }
