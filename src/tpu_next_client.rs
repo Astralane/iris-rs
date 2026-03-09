@@ -92,31 +92,34 @@ pub fn spawn_tpu_client_next(
     let udp_sock =
         std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
 
-    // enter() ensures tokio::spawn is available for both WebsocketNodeAddressService::run
-    // and ClientBuilder::build(), which both spawn internal tasks.
-    let _guard = tpu_client_rt.enter();
-    let leader_updater = tpu_client_rt
-        .block_on(WebsocketNodeAddressService::run(
+    // Both WebsocketNodeAddressService::run and ClientBuilder::build spawn tasks
+    // internally via tokio::spawn. Wrapping both in a single block_on provides
+    // the async context they need without a separate enter() guard (which would
+    // conflict with block_on's own context setup).
+    tpu_client_rt.block_on(async {
+        let leader_updater = WebsocketNodeAddressService::run(
             rpc.clone(),
             ws_url,
             tpu_cache_config,
             cancel.clone(),
-        ))
+        )
+        .await
         .context("cannot create leader updater")?;
 
-    let (sender, client) = ClientBuilder::new(Box::new(leader_updater))
-        .runtime_handle(tpu_client_rt.clone())
-        .cancel_token(cancel.child_token())
-        .bind_socket(udp_sock)
-        .identity(Some(&validator_identity))
-        .worker_channel_size(worker_channel_size)
-        .metric_reporter(send_metrics_stats)
-        .max_reconnect_attempts(max_reconnect_attempts)
-        .leader_send_fanout(leader_fan_out)
-        .max_cache_size(num_connections)
-        .broadcaster(broadcaster)
-        .build()?;
-    Ok((TpuClientNextSender { inner: sender }, client))
+        let (sender, client) = ClientBuilder::new(Box::new(leader_updater))
+            .runtime_handle(tpu_client_rt.clone())
+            .cancel_token(cancel.child_token())
+            .bind_socket(udp_sock)
+            .identity(Some(&validator_identity))
+            .worker_channel_size(worker_channel_size)
+            .metric_reporter(send_metrics_stats)
+            .max_reconnect_attempts(max_reconnect_attempts)
+            .leader_send_fanout(leader_fan_out)
+            .max_cache_size(num_connections)
+            .broadcaster(broadcaster)
+            .build()?;
+        Ok((TpuClientNextSender { inner: sender }, client))
+    })
 }
 
 impl SendTransactionClient for TpuClientNextSender {

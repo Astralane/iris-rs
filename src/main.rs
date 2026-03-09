@@ -159,7 +159,7 @@ fn main() -> anyhow::Result<()> {
         &config.tpu_client_rt.unwrap_or(TokioRtConfig::threads(2)),
     );
 
-    let (tpu_sender, _client) = tpu_next_client::spawn_tpu_client_next(
+    let (tpu_sender, client) = tpu_next_client::spawn_tpu_client_next(
         mev_protected_broadcaster,
         tpu_client_rt.handle(),
         rpc,
@@ -223,6 +223,9 @@ fn main() -> anyhow::Result<()> {
     cancel.cancel();
     // Also signal the gossip service which uses the AtomicBool directly.
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+    tpu_client_rt
+        .block_on(client.shutdown())
+        .expect("cannot join tpu client");
     dedup_and_retry_t
         .join()
         .expect("dedup_and_retry thread join failed");
