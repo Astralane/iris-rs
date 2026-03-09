@@ -73,6 +73,10 @@ pub struct Config {
     tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
+    /// Runtime config for the OTLP exporter (default: 1 thread, no pinning).
+    /// Required when otpl_endpoint is set — tonic gRPC needs a Tokio context.
+    /// Env: OTEL_RT__NUM_THREADS, OTEL_RT__CPUS
+    otel_rt: Option<TokioRtConfig>,
     /// Runtime config for the JSON-RPC server (default: 4 threads, no pinning).
     /// Env: RPC_RT__NUM_THREADS, RPC_RT__CPUS
     rpc_rt: Option<TokioRtConfig>,
@@ -106,12 +110,24 @@ fn main() -> anyhow::Result<()> {
     info!("config: {:?}", config);
     match &config.otpl_endpoint {
         Some(endpoint) => {
+            // tonic gRPC batch exporters require a Tokio runtime context at construction time.
+            let otel_rt = build_runtime(
+                "otel-rt",
+                &config.otel_rt.clone().unwrap_or(TokioRtConfig {
+                    num_threads: 1,
+                    cpus: vec![],
+                }),
+            );
+            let _guard = otel_rt.enter();
             let subscriber = get_subscriber_with_otpl(
                 env_filter,
                 endpoint.to_string(),
                 config.address.port(),
                 std::io::stdout,
             );
+            // Leak the runtime so it stays alive for the duration of the process —
+            // the batch exporters need it running to flush telemetry on shutdown.
+            std::mem::forget(otel_rt);
             init_subscriber(subscriber)
         }
         None => init_subscriber_without_signoz(std::io::stdout),
