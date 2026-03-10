@@ -42,7 +42,6 @@ impl IrisRpcServer for IrisRpcServerImpl {
         params: Option<RpcSendTransactionConfig>,
         mev_protect: Option<bool>,
     ) -> RpcResult<String> {
-        info!("Received transaction on rpc connection loop");
         counter!("iris_txn_total_transactions").increment(1);
         let mev_protect = mev_protect.unwrap_or(false);
         let max_retry = params.and_then(|param| param.max_retries);
