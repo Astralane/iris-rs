@@ -11,7 +11,7 @@ use metrics::counter;
 use solana_rpc_client_api::config::RpcSendTransactionConfig;
 use solana_transaction_status::UiTransactionEncoding;
 use std::time::Instant;
-use tracing::{error, info};
+use tracing::error;
 
 pub struct IrisRpcServerImpl {
     dedup_sender: Sender<DedupPacketPayload>,
