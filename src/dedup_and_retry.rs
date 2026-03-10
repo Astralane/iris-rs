@@ -86,12 +86,14 @@ fn spawn_dedup_loop(
                 let signature = view.signatures()[0];
                 if let Some(tx) = dedup_store.get_transaction(&signature) {
                     let elapsed = tx.received_ts.elapsed().as_micros();
-                    match tx.source {
-                        PacketSource::Quic => {
-                            histogram!("transaction_quic_won").record(elapsed as f64)
-                        }
-                        PacketSource::JsonRpc => {
-                            histogram!("transaction_json_rpc_won").record(elapsed as f64)
+                    if tx.source != source {
+                        match tx.source {
+                            PacketSource::Quic => {
+                                histogram!("transaction_quic_won").record(elapsed as f64)
+                            }
+                            PacketSource::JsonRpc => {
+                                histogram!("transaction_json_rpc_won").record(elapsed as f64)
+                            }
                         }
                     }
                     counter!("duplicate_signature").increment(1);
@@ -174,7 +176,7 @@ fn spawn_retry_loop(
                     tpu_sender.send_transaction_batch(batch.to_vec());
                 }
                 to_retry.clear();
-                
+
                 std::thread::sleep(Duration::from_millis(600));
             }
         })

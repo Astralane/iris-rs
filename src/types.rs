@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 //(packet, received time, received method)
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PacketSource {
     Quic,
     JsonRpc,
