@@ -5,9 +5,7 @@ use crossbeam_channel::Sender;
 use metrics::{counter, histogram};
 use pem::Pem;
 use quinn::crypto::rustls::QuicServerConfig;
-use quinn::{
-    Connecting, Endpoint, EndpointConfig, IdleTimeout, RecvStream, ServerConfig, TokioRuntime,
-};
+use quinn::{Connecting, ConnectionError, Endpoint, IdleTimeout, RecvStream, ServerConfig};
 use rustls::KeyLogFile;
 use solana_measure::measure_us;
 use solana_sdk::signature::Keypair;
@@ -15,11 +13,12 @@ use solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID;
 use solana_streamer::packet::PACKET_DATA_SIZE;
 use solana_streamer::quic::{QuicServerError, QUIC_MAX_TIMEOUT};
 use solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder};
-use std::net::UdpSocket;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, warn};
+use tracing::{error, info};
 
 const QUIC_MAX_SIZE: usize = PACKET_DATA_SIZE + 8;
 
@@ -46,7 +45,7 @@ pub(crate) fn configure_server(
 
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
     // to support 1000 txns concurrently
-    config.max_concurrent_uni_streams(1024u32.into());
+    config.max_concurrent_uni_streams(2048u32.into());
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
 
@@ -65,41 +64,26 @@ pub(crate) fn configure_server(
 
 pub fn spawn_new(
     thread_name: &'static str,
-    bind_port: u16,
+    bind_addr: SocketAddr,
     rt_config: TokioRtConfig,
     identity_keypair: &Keypair,
     dedup_sender: Sender<DedupPacketPayload>,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
-    let sock = UdpSocket::bind(("0.0.0.0", bind_port)).map_err(anyhow::Error::msg)?;
-    sock.set_nonblocking(true)?;
-
+) -> anyhow::Result<JoinHandle<()>> {
     let (config, _cert_chain_pem) =
         configure_server(identity_keypair).map_err(anyhow::Error::msg)?;
     let rt = build_runtime("quic-server-rt", &rt_config);
 
-    let server_handle = {
-        let _guard = rt.enter();
-        tokio::spawn(async move {
-            let endpoint = Endpoint::new(
-                EndpointConfig::default(),
-                Some(config.clone()),
-                sock,
-                Arc::new(TokioRuntime),
-            )
-            .expect("cannot create endpoint");
-            quic_server_loop(endpoint, dedup_sender, cancel).await
-        })
-    };
-    std::thread::Builder::new()
+    let quic_t = std::thread::Builder::new()
         .name(thread_name.into())
         .spawn(move || {
-            if let Err(e) = rt.block_on(server_handle) {
-                warn!("error from runtime.block_on: {e:?}");
-            }
+            rt.block_on(async move {
+                let endpoint = Endpoint::server(config, bind_addr).expect("cannot create endpoint");
+                quic_server_loop(endpoint, dedup_sender, cancel).await
+            })
         })
         .unwrap();
-    Ok(())
+    Ok(quic_t)
 }
 
 async fn quic_server_loop(
@@ -107,6 +91,7 @@ async fn quic_server_loop(
     dedup_sender: Sender<DedupPacketPayload>,
     cancel: CancellationToken,
 ) {
+    info!("quic server loop starting");
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -114,6 +99,7 @@ async fn quic_server_loop(
             }
             maybe_incoming = endpoint.accept() => {
                 if let Some(incoming) = maybe_incoming {
+                    info!("got quic connection from {:?}", incoming.remote_address());
                     match incoming.accept() {
                         Ok(connecting) => {
                             tokio::spawn(handle_connection(connecting, dedup_sender.clone()));
@@ -142,8 +128,10 @@ async fn handle_connection(connecting: Connecting, dedup_sender: Sender<DedupPac
         let stream = match conn.accept_uni().await {
             Ok(stream) => stream,
             Err(e) => {
-                error!("quic accept uni stream error: {}", e);
-                counter!("quic_server_incoming_err", "error" => e.to_string() ).increment(1);
+                if !matches!(e, ConnectionError::ApplicationClosed(_)) {
+                    error!("quic accept uni stream error: {}", e);
+                    counter!("quic_server_incoming_err", "error" => e.to_string() ).increment(1);
+                }
                 break;
             }
         };
@@ -175,6 +163,7 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
             return;
         }
     });
+    info!("got txn from quic stream");
     histogram!("wincode_deserialize_micros").record(micros as f64);
     if let Err(e) = dedup_sender.try_send((packet, Instant::now(), PacketSource::Quic)) {
         error!("cannot send from quic-server to dedup {e:?}");

@@ -85,7 +85,7 @@ pub struct Config {
     /// Runtime config for the QUIC server (default: 2 threads, no pinning).
     /// Env: QUIC_RT__NUM_THREADS, QUIC_RT__CPUS
     quic_rt: Option<TokioRtConfig>,
-    quic_bind_port: Option<u16>,
+    quic_bind_address: Option<SocketAddr>,
     /// Runtime config for the chain-state updater (default: 2 threads, no pinning).
     /// Env: CHAIN_STATE_RT__NUM_THREADS, CHAIN_STATE_RT__CPUS
     chain_state_rt: Option<TokioRtConfig>,
@@ -190,12 +190,12 @@ fn main() -> anyhow::Result<()> {
         cancel.clone(),
     );
 
-    let _maybe_quic_server =
-        if let Some((quic_rt_config, bind_port)) = config.quic_rt.zip(config.quic_bind_port) {
-            info!("running with quic server at port {bind_port:?}");
+    let maybe_quic_server =
+        if let Some((quic_rt_config, bind_addr)) = config.quic_rt.zip(config.quic_bind_address) {
+            info!("running with quic server at port {bind_addr:?}");
             Some(quic_server::spawn_new(
                 "iris-quic-server",
-                bind_port,
+                bind_addr,
                 quic_rt_config,
                 &Keypair::new(),
                 dedup_sender.clone(),
@@ -223,6 +223,9 @@ fn main() -> anyhow::Result<()> {
     cancel.cancel();
     // Also signal the gossip service which uses the AtomicBool directly.
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(quic_t) = maybe_quic_server{
+        quic_t.join().unwrap();
+    }
     tpu_client_rt
         .block_on(client.shutdown())
         .expect("cannot join tpu client");

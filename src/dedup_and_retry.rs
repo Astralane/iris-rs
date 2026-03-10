@@ -173,7 +173,8 @@ fn spawn_retry_loop(
                 for batch in to_retry.chunks(10).clone() {
                     tpu_sender.send_transaction_batch(batch.to_vec());
                 }
-
+                to_retry.clear();
+                
                 std::thread::sleep(Duration::from_millis(600));
             }
         })
