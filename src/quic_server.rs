@@ -160,6 +160,7 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
         Ok(packet) => packet,
         Err(err) => {
             error!("cannot decode packet {err:?}");
+            counter!("quic_txn_decode_error").increment(1);
             return;
         }
     });
@@ -169,5 +170,6 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
         error!("cannot send from quic-server to dedup {e:?}");
         counter!("quic_to_dedup_send_err", "error" => e.to_string()).increment(1);
     }
+    counter!("txn_quic_count").increment(1);
     histogram!("handle_uni_stream_latency").record(now.elapsed().as_micros() as f64);
 }
