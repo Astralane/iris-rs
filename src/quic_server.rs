@@ -164,7 +164,6 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
             return;
         }
     });
-    info!("got txn from quic stream");
     histogram!("wincode_deserialize_micros").record(micros as f64);
     if let Err(e) = dedup_sender.try_send((packet, Instant::now(), PacketSource::Quic)) {
         error!("cannot send from quic-server to dedup {e:?}");
