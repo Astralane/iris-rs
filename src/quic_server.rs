@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-const QUIC_MAX_SIZE: usize = PACKET_DATA_SIZE + 8;
+const QUIC_MAX_SIZE: usize = 2 * PACKET_DATA_SIZE;
 
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
@@ -155,6 +155,8 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
             return;
         }
     };
+
+    histogram!("quic_packet_data_size").record(data.len() as f64);
 
     let (packet, micros) = measure_us!(match wincode::deserialize::<TransactionPacket>(&data) {
         Ok(packet) => packet,
