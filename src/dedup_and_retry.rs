@@ -6,6 +6,7 @@ use bytes::Bytes;
 use cached::{Cached, TimedCache};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use metrics::{counter, gauge, histogram};
+use solana_measure::measure_us;
 use solana_rpc_client_api::response::transaction::Signature;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -76,7 +77,7 @@ fn spawn_dedup_loop(
                     }
                 };
 
-                let view = match TransactionView::try_new_unsanitized(
+                let (view, latency_us) = measure_us!(match TransactionView::try_new_unsanitized(
                     packet.wire_transaction.as_slice(),
                 ) {
                     Ok(view) => view,
@@ -85,11 +86,14 @@ fn spawn_dedup_loop(
                         counter!("dedup_state_transaction_view_err").increment(1);
                         continue;
                     }
-                };
+                });
+
+                histogram!("transaction_view_sanitization_latency").record(latency_us as f64);
 
                 let signature = view.signatures()[0];
-                if let Some((first_seen_source, received_ts)) = dedup_cache.cache_get(&signature) {
-                    let elapsed = received_ts.elapsed().as_micros();
+                if let Some((first_seen_source, first_seen_ts)) = dedup_cache.cache_get(&signature)
+                {
+                    let elapsed = timestamp.duration_since(*first_seen_ts).as_micros();
                     if first_seen_source != &source {
                         match first_seen_source {
                             PacketSource::Quic => {
