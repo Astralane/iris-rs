@@ -84,17 +84,20 @@ fn spawn_dedup_loop(
                 };
 
                 let signature = view.signatures()[0];
-                if let Some(tx) = dedup_store.get_transaction(&signature) {
-                    let elapsed = tx.received_ts.elapsed().as_micros();
-                    if tx.source != source {
-                        match tx.source {
+                if let Some(old) = dedup_store.get_transaction(&signature) {
+                    let elapsed = old.received_ts.elapsed().as_micros();
+                    if old.source != source {
+                        match old.source {
                             PacketSource::Quic => {
+                                counter!("transaction_quic_won_count").increment(1);
                                 histogram!("transaction_quic_won").record(elapsed as f64)
                             }
                             PacketSource::JsonRpc => {
+                                counter!("transaction_json_won_count").increment(1);
                                 histogram!("transaction_json_rpc_won").record(elapsed as f64)
                             }
                         }
+                        counter!("source_comparable_txns").increment(1);
                     }
                     counter!("duplicate_signature").increment(1);
                     continue;
