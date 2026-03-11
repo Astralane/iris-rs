@@ -3,8 +3,10 @@ use crate::tpu_next_client::{TpuClientNextSender, TpuClientPayload};
 use crate::types::{ChainStateClient, PacketSource, SendTransactionClient, TransactionPacket};
 use agave_transaction_view::transaction_view::TransactionView;
 use bytes::Bytes;
+use cached::{Cached, TimedCache};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use metrics::{counter, gauge, histogram};
+use solana_rpc_client_api::response::transaction::Signature;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -24,17 +26,17 @@ impl DedupAndRetry {
         chain_state: Arc<dyn ChainStateClient>,
         cancel: CancellationToken,
     ) -> Self {
-        let store = TransactionStoreImpl::new();
+        let retry_store = TransactionStoreImpl::new();
         let dedup_t = spawn_dedup_loop(
             tpu_client_next_sender.clone(),
             receiver,
-            store.clone(),
+            retry_store.clone(),
             chain_state.clone(),
             cancel.clone(),
         );
         let retry_t = spawn_retry_loop(
             tpu_client_next_sender.clone(),
-            store.clone(),
+            retry_store.clone(),
             chain_state,
             cancel,
         );
@@ -50,7 +52,7 @@ impl DedupAndRetry {
 fn spawn_dedup_loop(
     tpu_sender: TpuClientNextSender,
     packet_receiver: Receiver<DedupPacketPayload>,
-    dedup_store: TransactionStoreImpl,
+    retry_cache: TransactionStoreImpl,
     chain_state: Arc<dyn ChainStateClient>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
@@ -58,6 +60,8 @@ fn spawn_dedup_loop(
         .name("dedup_recv_loop".to_string())
         .spawn(move || {
             const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+            let mut dedup_cache: TimedCache<Signature, (PacketSource, Instant)> =
+                TimedCache::with_lifespan(Duration::from_secs(5 * 60));
             loop {
                 if cancel.is_cancelled() {
                     break;
@@ -84,10 +88,10 @@ fn spawn_dedup_loop(
                 };
 
                 let signature = view.signatures()[0];
-                if let Some(old) = dedup_store.get_transaction(&signature) {
-                    let elapsed = old.received_ts.elapsed().as_micros();
-                    if old.source != source {
-                        match old.source {
+                if let Some((first_seen_source, received_ts)) = dedup_cache.cache_get(&signature) {
+                    let elapsed = received_ts.elapsed().as_micros();
+                    if first_seen_source != &source {
+                        match first_seen_source {
                             PacketSource::Quic => {
                                 counter!("transaction_quic_won_count").increment(1);
                                 histogram!("transaction_quic_won").record(elapsed as f64)
@@ -102,10 +106,10 @@ fn spawn_dedup_loop(
                     counter!("duplicate_signature").increment(1);
                     continue;
                 }
+                dedup_cache.cache_set(signature, (source, timestamp));
                 let wire_transaction = Bytes::from(packet.wire_transaction);
-                dedup_store.add_transaction(TransactionContext {
+                retry_cache.add_transaction(TransactionContext {
                     wire_transaction: wire_transaction.clone(),
-                    source,
                     signature,
                     received_ts: timestamp,
                     slot: chain_state.get_slot(),
@@ -121,7 +125,7 @@ fn spawn_dedup_loop(
 
 fn spawn_retry_loop(
     tpu_sender: TpuClientNextSender,
-    store: TransactionStoreImpl,
+    retry_store: TransactionStoreImpl,
     chain_state: Arc<dyn ChainStateClient>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
@@ -135,7 +139,7 @@ fn spawn_retry_loop(
                 if cancel.is_cancelled() {
                     break;
                 }
-                let transactions_map = store.get_transactions();
+                let transactions_map = retry_store.get_transactions();
                 gauge!("iris_retry_transactions").set(transactions_map.len() as f64);
 
                 for mut txn in transactions_map.iter_mut() {
@@ -168,7 +172,7 @@ fn spawn_retry_loop(
 
                 gauge!("iris_transactions_removed").increment(to_remove.len() as f64);
                 for signature in to_remove.drain() {
-                    store.remove_transaction(signature);
+                    retry_store.remove_transaction(signature);
                 }
 
                 if !to_retry.is_empty() {

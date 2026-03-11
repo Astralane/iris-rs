@@ -1,4 +1,3 @@
-use crate::types::PacketSource;
 use dashmap::DashMap;
 use solana_sdk::signature::Signature;
 use std::sync::Arc;
@@ -7,7 +6,6 @@ use std::time::Instant;
 #[derive(Clone, Debug)]
 pub struct TransactionContext {
     pub wire_transaction: bytes::Bytes,
-    pub source: PacketSource,
     pub signature: Signature,
     pub received_ts: Instant,
     pub slot: u64,
@@ -37,9 +35,12 @@ impl TransactionStoreImpl {
         let transaction = self.transactions.remove(&signature);
         transaction.map(|t| t.1)
     }
+
     pub(crate) fn get_transactions(&self) -> Arc<DashMap<Signature, TransactionContext>> {
         self.transactions.clone()
     }
+
+    #[allow(unused)]
     pub(crate) fn get_transaction(
         &self,
         signature: &Signature,
