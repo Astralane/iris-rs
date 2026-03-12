@@ -5,7 +5,10 @@ use crossbeam_channel::Sender;
 use metrics::{counter, histogram};
 use pem::Pem;
 use quinn::crypto::rustls::QuicServerConfig;
-use quinn::{Connecting, ConnectionError, Endpoint, IdleTimeout, RecvStream, ServerConfig};
+use quinn::{
+    AckFrequencyConfig, Connecting, ConnectionError, Endpoint, IdleTimeout, RecvStream,
+    ServerConfig, VarInt,
+};
 use rustls::KeyLogFile;
 use solana_measure::measure_us;
 use solana_sdk::signature::Keypair;
@@ -24,6 +27,7 @@ const QUIC_MAX_SIZE: usize = 2 * PACKET_DATA_SIZE;
 
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
+    is_colo: bool,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
     let cert_chain_pem_parts = vec![Pem {
@@ -44,14 +48,27 @@ pub(crate) fn configure_server(
     server_config.migration(false);
 
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
-    // to support 1000 txns concurrently
-    config.max_concurrent_uni_streams(2048u32.into());
+
+    if is_colo {
+        config.initial_rtt(Duration::from_millis(5));
+        // Ask the peer to ACK more aggressively.
+        // This is ignored if the peer doesn't support the ACK Frequency extension.
+        let mut ack = AckFrequencyConfig::default();
+        ack.ack_eliciting_threshold(VarInt::from_u32(0)); // ACK every packet
+        ack.max_ack_delay(Some(Duration::from_millis(1)));
+        ack.reordering_threshold(VarInt::from_u32(2));
+        config.ack_frequency_config(Some(ack));
+    }
+    // // Make sure stream credit isn't a limiter.
+    config.max_concurrent_uni_streams(16_384u32.into());
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
 
     // disable bidi & datagrams
     config.max_concurrent_bidi_streams(0u32.into());
     config.datagram_receive_buffer_size(None);
+    // Many tiny independent streams.
+    config.send_fairness(false);
 
     // Disable GSO. The server only accepts inbound unidirectional streams initiated by clients,
     // which means that reply data never exceeds one MTU. By disabling GSO, we make
@@ -68,10 +85,11 @@ pub fn spawn_new(
     rt_config: TokioRtConfig,
     identity_keypair: &Keypair,
     dedup_sender: Sender<DedupPacketPayload>,
+    is_colo: bool,
     cancel: CancellationToken,
 ) -> anyhow::Result<JoinHandle<()>> {
     let (config, _cert_chain_pem) =
-        configure_server(identity_keypair).map_err(anyhow::Error::msg)?;
+        configure_server(identity_keypair, is_colo).map_err(anyhow::Error::msg)?;
     let rt = build_runtime("quic-server-rt", &rt_config);
 
     let quic_t = std::thread::Builder::new()

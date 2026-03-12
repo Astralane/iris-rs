@@ -89,6 +89,8 @@ pub struct Config {
     /// Runtime config for the chain-state updater (default: 2 threads, no pinning).
     /// Env: CHAIN_STATE_RT__NUM_THREADS, CHAIN_STATE_RT__CPUS
     chain_state_rt: Option<TokioRtConfig>,
+    // LAN like tuning if colocated
+    is_colocated: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -199,6 +201,7 @@ fn main() -> anyhow::Result<()> {
                 quic_rt_config,
                 &Keypair::new(),
                 dedup_sender.clone(),
+                config.is_colocated,
                 cancel.clone(),
             )?)
         } else {
@@ -223,7 +226,7 @@ fn main() -> anyhow::Result<()> {
     cancel.cancel();
     // Also signal the gossip service which uses the AtomicBool directly.
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
-    if let Some(quic_t) = maybe_quic_server{
+    if let Some(quic_t) = maybe_quic_server {
         quic_t.join().unwrap();
     }
     tpu_client_rt
