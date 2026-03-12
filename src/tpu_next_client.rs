@@ -97,14 +97,10 @@ pub fn spawn_tpu_client_next(
     // the async context they need without a separate enter() guard (which would
     // conflict with block_on's own context setup).
     tpu_client_rt.block_on(async {
-        let leader_updater = WebsocketNodeAddressService::run(
-            rpc.clone(),
-            ws_url,
-            tpu_cache_config,
-            cancel.clone(),
-        )
-        .await
-        .context("cannot create leader updater")?;
+        let leader_updater =
+            WebsocketNodeAddressService::run(rpc.clone(), ws_url, tpu_cache_config, cancel.clone())
+                .await
+                .context("cannot create leader updater")?;
 
         let (sender, client) = ClientBuilder::new(Box::new(leader_updater))
             .runtime_handle(tpu_client_rt.clone())
