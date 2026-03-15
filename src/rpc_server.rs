@@ -73,7 +73,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         let packet = TransactionPacket {
             wire_transaction,
             mev_protect,
-            max_retry: max_retry.map(|i| i as u8),
+            max_retry: max_retry.map(|i| i as u16),
         };
         if let Err(e) = self
             .dedup_sender

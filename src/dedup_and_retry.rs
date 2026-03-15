@@ -25,6 +25,7 @@ impl DedupAndRetry {
         tpu_client_next_sender: TpuClientNextSender,
         receiver: Receiver<DedupPacketPayload>,
         chain_state: Arc<dyn ChainStateClient>,
+        retry_duration: Duration,
         cancel: CancellationToken,
     ) -> Self {
         let retry_store = TransactionStoreImpl::new();
@@ -39,6 +40,7 @@ impl DedupAndRetry {
             tpu_client_next_sender.clone(),
             retry_store.clone(),
             chain_state,
+            retry_duration,
             cancel,
         );
         Self { dedup_t, retry_t }
@@ -131,6 +133,7 @@ fn spawn_retry_loop(
     tpu_sender: TpuClientNextSender,
     retry_store: TransactionStoreImpl,
     chain_state: Arc<dyn ChainStateClient>,
+    retry_interval: Duration,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
     const TXN_EXPIRY_DURATION: Duration = Duration::from_secs(120);
@@ -187,8 +190,7 @@ fn spawn_retry_loop(
                     tpu_sender.send_transaction_batch(batch.to_vec());
                 }
                 to_retry.clear();
-
-                std::thread::sleep(Duration::from_millis(600));
+                std::thread::sleep(retry_interval);
             }
         })
         .unwrap()

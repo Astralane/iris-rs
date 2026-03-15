@@ -201,6 +201,7 @@ fn main() -> anyhow::Result<()> {
         tpu_sender,
         dedup_receiver,
         Arc::new(chain_state),
+        Duration::from_millis(config.tx_retry_interval_ms as u64),
         cancel.clone(),
     );
 

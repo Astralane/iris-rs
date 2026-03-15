@@ -9,7 +9,7 @@ pub struct TransactionContext {
     pub signature: Signature,
     pub received_ts: Instant,
     pub slot: u64,
-    pub retry_count: u8,
+    pub retry_count: u16,
     pub mev_protect: bool,
 }
 
