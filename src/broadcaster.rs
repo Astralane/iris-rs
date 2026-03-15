@@ -77,8 +77,8 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         let blocked_leaders = self.0.load();
-        let is_blocked_leader_slot = leaders.first().is_some_and(|l| blocked_leaders.contains(l));
-
+        //check if current or next leader is in the block list
+        let is_blocked_leader_slot = leaders.iter().take(2).any(|l| blocked_leaders.contains(l));
         let batch = if is_blocked_leader_slot {
             transaction_batch
                 .into_iter()
