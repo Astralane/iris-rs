@@ -16,7 +16,7 @@ pub enum PacketSource {
 pub struct TransactionPacket {
     pub wire_transaction: Vec<u8>,
     pub mev_protect: bool,
-    pub max_retry: Option<u8>,
+    pub max_retry: Option<u16>,
 }
 
 pub trait SendTransactionClient: Send + Sync {
