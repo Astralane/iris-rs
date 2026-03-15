@@ -19,12 +19,17 @@ use tracing::{debug, info, warn};
 
 const REFRESH_LIST_DURATION: Duration = Duration::from_secs(10 * 60); // 10 mins
 
-pub struct MevProtectedBroadcaster(Arc<ArcSwap<HashSet<SocketAddr>>>);
+pub struct MevProtectedBroadcaster {
+    blocked_leaders: Arc<ArcSwap<HashSet<SocketAddr>>>,
+    leader_skip_window: usize,
+}
+
 impl MevProtectedBroadcaster {
     pub fn run(
         key: Pubkey,
         rpc: Arc<RpcClient>,
         cancel: CancellationToken,
+        leader_skip_window: usize,
     ) -> (Self, JoinHandle<()>) {
         let shield = YellowstoneShieldProvider::new(key, rpc);
         let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
@@ -32,7 +37,7 @@ impl MevProtectedBroadcaster {
             .name("mev-broadcast-refrest".to_string())
             .spawn({
                 let blocked_addrs = blocked_addrs.clone();
-                move||{
+                move || {
                     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                     rt.block_on(async move {
                         let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
@@ -64,7 +69,13 @@ impl MevProtectedBroadcaster {
                     })
                 }
             }).unwrap();
-        (MevProtectedBroadcaster(blocked_addrs), refresh_handle)
+        (
+            MevProtectedBroadcaster {
+                blocked_leaders: blocked_addrs,
+                leader_skip_window,
+            },
+            refresh_handle,
+        )
     }
 }
 
@@ -76,9 +87,12 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
-        let blocked_leaders = self.0.load();
+        let blocked_leaders = self.blocked_leaders.load();
         //check if current or next leader is in the block list
-        let is_blocked_leader_slot = leaders.iter().take(2).any(|l| blocked_leaders.contains(l));
+        let is_blocked_leader_slot = leaders
+            .iter()
+            .take(self.leader_skip_window)
+            .any(|l| blocked_leaders.contains(l));
         let batch = if is_blocked_leader_slot {
             transaction_batch
                 .into_iter()

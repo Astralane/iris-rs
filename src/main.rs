@@ -89,9 +89,15 @@ pub struct Config {
     /// Runtime config for the chain-state updater (default: 2 threads, no pinning).
     /// Env: CHAIN_STATE_RT__NUM_THREADS, CHAIN_STATE_RT__CPUS
     chain_state_rt: Option<TokioRtConfig>,
-    // LAN like tuning if colocated
+    /// LAN like tuning for quic if iris is run as a colocated instance
     is_colocated: bool,
+    /// how many upcoming leaders you inspect before deciding to skip sending transactions
+    /// for mev protected txns
+    blocked_leader_skip_window: Option<usize>,
 }
+
+const DEFAULT_BLOCK_LEADER_SKIP_WINDOW: usize = 2;
+const SLOT_RETAIN_COUNT: u64 = 800; // 4mins
 
 fn main() -> anyhow::Result<()> {
     //for some reason ths is required to make rustls work
@@ -149,12 +155,18 @@ fn main() -> anyhow::Result<()> {
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let tpu_cache_config = LeaderTpuCacheServiceConfig {
         lookahead_leaders: config.leaders_fanout + 1,
-        refresh_nodes_info_every: Duration::from_secs(5 * 60),
+        refresh_nodes_info_every: Duration::from_secs(2 * 60),
         max_consecutive_failures: 10,
     };
     info!("leader updater created");
-    let (mev_protected_broadcaster, _broadcaster_jh) =
-        MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
+    let (mev_protected_broadcaster, _broadcaster_jh) = MevProtectedBroadcaster::run(
+        shield_policy_key,
+        rpc.clone(),
+        cancel.clone(),
+        config
+            .blocked_leader_skip_window
+            .unwrap_or(DEFAULT_BLOCK_LEADER_SKIP_WINDOW),
+    );
 
     let tpu_client_rt = build_runtime(
         "tpu_client_next_rt",
@@ -177,13 +189,13 @@ fn main() -> anyhow::Result<()> {
     .expect("cannot create tpu client next");
 
     let (chain_state, chain_update_t_handle) = spawn_chain_state_updater(
-        800, // around 4 mins
+        SLOT_RETAIN_COUNT, // around 4 mins
         config.ws_url,
         config.grpc_url,
         config.chain_state_rt.unwrap_or(TokioRtConfig::threads(2)),
     );
 
-    let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(2 * 1024);
+    let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(4 * 1024);
 
     let dedup_and_retry_t = DedupAndRetry::new(
         tpu_sender,
