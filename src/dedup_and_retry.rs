@@ -63,7 +63,7 @@ fn spawn_dedup_loop(
         .name("dedup_recv_loop".to_string())
         .spawn(move || {
             const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-            let mut dedup_cache: TimedCache<Signature, (PacketSource, Instant)> =
+            let mut dedup_cache: TimedCache<Signature, (PacketSource, Instant, u16)> =
                 TimedCache::with_lifespan(Duration::from_secs(5 * 60));
             loop {
                 if cancel.is_cancelled() {
@@ -93,8 +93,15 @@ fn spawn_dedup_loop(
                 histogram!("transaction_view_sanitization_latency").record(latency_us as f64);
 
                 let signature = view.signatures()[0];
-                if let Some((first_seen_source, first_seen_ts)) = dedup_cache.cache_get(&signature)
+                if let Some((first_seen_source, first_seen_ts, seen_count)) =
+                    dedup_cache.cache_get_mut(&signature)
                 {
+                    *seen_count += 1;
+                    if *seen_count > 2 {
+                        counter!("duplicate_seen_more_than_twice").increment(1);
+                        continue;
+                    }
+
                     let elapsed = timestamp.duration_since(*first_seen_ts).as_micros();
                     if first_seen_source != &source {
                         match first_seen_source {
@@ -112,7 +119,7 @@ fn spawn_dedup_loop(
                     counter!("duplicate_signature").increment(1);
                     continue;
                 }
-                dedup_cache.cache_set(signature, (source, timestamp));
+                dedup_cache.cache_set(signature, (source, timestamp, 0));
                 let wire_transaction = Bytes::from(packet.wire_transaction);
                 retry_cache.add_transaction(TransactionContext {
                     wire_transaction: wire_transaction.clone(),
