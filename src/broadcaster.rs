@@ -142,8 +142,55 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
 #[cfg(test)]
 pub mod test {
+    use super::MevProtectedBroadcaster;
+    use arc_swap::ArcSwap;
     use bytes::Bytes;
     use solana_tpu_client_next::transaction_batch::TransactionBatch;
+    use std::collections::HashSet;
+    use std::net::SocketAddr;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    pub async fn test_fetch_blocked_validators_from_chain() {
+        let rpc = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+            "http://rpc:8899".to_string(),
+        ));
+        let key =
+            solana_sdk::pubkey::Pubkey::from_str("4QXuzwHutRGjMHRfpGgZpaC9LEYR2wqVmLJBbPbK1zQo")
+                .unwrap();
+
+        let shield = crate::shield::YellowstoneShieldProvider::new(key, rpc);
+        let blocked_ips = shield.get_blocked_identities().await.unwrap();
+
+        // println!("Blocked validators ({} total):", blocked_ips.len());
+        for addr in &blocked_ips {
+            println!("  {addr}");
+        }
+
+        assert!(
+            !blocked_ips.is_empty(),
+            "expected at least one blocked validator"
+        );
+    }
+
+    #[test]
+    pub fn test_blocked_validators_list() {
+        let addrs: HashSet<SocketAddr> = ["127.0.0.1:8001", "127.0.0.1:8002", "192.168.1.10:9000"]
+            .iter()
+            .map(|s| SocketAddr::from_str(s).unwrap())
+            .collect();
+
+        let broadcaster = MevProtectedBroadcaster {
+            blocked_leaders: Arc::new(ArcSwap::from_pointee(addrs.clone())),
+            leader_skip_window: 4,
+        };
+
+        let loaded = broadcaster.blocked_leaders.load();
+        let listed: HashSet<SocketAddr> = loaded.iter().copied().collect();
+
+        assert_eq!(listed, addrs);
+    }
 
     #[test]
     pub fn test_mev_protect_serialization_deserialization_case_true() {
