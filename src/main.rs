@@ -154,7 +154,7 @@ fn main() -> anyhow::Result<()> {
 
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let tpu_cache_config = LeaderTpuCacheServiceConfig {
-        lookahead_leaders: config.leaders_fanout + 1,
+        lookahead_leaders: config.leaders_fanout + 32,
         refresh_nodes_info_every: Duration::from_secs(2 * 60),
         max_consecutive_failures: 10,
     };
