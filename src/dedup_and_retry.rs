@@ -143,7 +143,7 @@ fn spawn_retry_loop(
     retry_interval: Duration,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
-    const TXN_EXPIRY_DURATION: Duration = Duration::from_secs(120);
+    const TXN_EXPIRY_DURATION: Duration = Duration::from_secs(7);
     std::thread::Builder::new()
         .name("dedup_retry_loop".to_string())
         .spawn(move || {
