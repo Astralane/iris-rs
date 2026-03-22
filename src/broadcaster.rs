@@ -1,90 +1,114 @@
 use crate::shield::YellowstoneShieldProvider;
+use crate::tpu_next_client::TpuClientPayload;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError};
 use solana_tpu_client_next::ConnectionWorkersSchedulerError;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-static BLOCKED_LEADERS: Lazy<ArcSwap<Vec<SocketAddr>>> =
-    Lazy::new(|| ArcSwap::from_pointee(vec![]));
+const REFRESH_LIST_DURATION: Duration = Duration::from_secs(10 * 60); // 10 mins
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+pub struct MevProtectedBroadcaster {
+    blocked_leaders: Arc<ArcSwap<HashSet<SocketAddr>>>,
+    leader_skip_window: usize,
+}
 
-const REFRESH_LIST_DURATION: std::time::Duration = std::time::Duration::from_secs(1 * 60 * 60); // 1 hour
-pub struct MevProtectedBroadcaster;
-pub fn run(
-    key: Pubkey,
-    rpc: Arc<RpcClient>,
-    cancel: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    let shield = YellowstoneShieldProvider::new(key, rpc);
-    let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    warn!("Cancel signal received, exiting");
-                    break;
-                }
-                _ = interval.tick() => {
-                    match timeout(TIMEOUT, shield.get_blocked_ips()).await {
-                        Ok(Ok(blocked_leaders)) => {
-                            BLOCKED_LEADERS.store(Arc::new(blocked_leaders));
-                            info!("Updated blocked leaders: {:?}", BLOCKED_LEADERS.load());
+impl MevProtectedBroadcaster {
+    pub fn run(
+        key: Pubkey,
+        rpc: Arc<RpcClient>,
+        cancel: CancellationToken,
+        leader_skip_window: usize,
+    ) -> (Self, JoinHandle<()>) {
+        let shield = YellowstoneShieldProvider::new(key, rpc);
+        let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
+        let refresh_handle = std::thread::Builder::new()
+            .name("mev-broadcast-refrest".to_string())
+            .spawn({
+                let blocked_addrs = blocked_addrs.clone();
+                move || {
+                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    rt.block_on(async move {
+                        let mut interval = tokio::time::interval(REFRESH_LIST_DURATION);
+                        const TIMEOUT: Duration = Duration::from_secs(10);
+                        loop {
+                            tokio::select! {
+                        _ = cancel.cancelled() => {
+                            warn!("Cancel signal received, exiting");
+                            break;
                         }
-                        Ok(Err(e)) => {
-                            warn!("Failed to fetch blocked leaders {:?}", e);
-                        }
-                        Err(_) => {
-                            warn!("Timeout fetching blocked leaders");
-                            continue;
+                        _ = interval.tick() => {
+                            match timeout(TIMEOUT, shield.get_blocked_ips()).await {
+                                Ok(Ok(blocked_leaders)) => {
+                                    blocked_addrs.store(Arc::new(blocked_leaders.into_iter().collect()));
+                                    info!("Updated blocked leaders: {:?}", blocked_addrs.load());
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("Failed to fetch blocked leaders {:?}", e);
+                                }
+                                Err(_) => {
+                                    warn!("Timeout fetching blocked leaders");
+                                    continue;
+                                }
+                            }
                         }
                     }
+                        }
+                        info!("Exiting blocked leaders refresh task");
+                    })
                 }
-            }
-        }
-        info!("Exiting blocked leaders refresh task");
-    })
+            }).unwrap();
+        (
+            MevProtectedBroadcaster {
+                blocked_leaders: blocked_addrs,
+                leader_skip_window,
+            },
+            refresh_handle,
+        )
+    }
 }
 
 #[async_trait]
 impl WorkersBroadcaster for MevProtectedBroadcaster {
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
-        // the last element value shows if this transaction requires MEV protection,
-        // the actual transactions are everything, but the last element
-        // not the best way but done due to limitation on tpu-client-next.
-        let tx_batch = transaction_batch.clone().into_iter();
-        let Some((prefix_bytes, wire_transactions)) = tx_batch.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            return Ok(());
+        let blocked_leaders = self.blocked_leaders.load();
+        //check if current or next leader is in the block list
+        let is_blocked_leader_slot = leaders
+            .iter()
+            .take(self.leader_skip_window)
+            .any(|l| blocked_leaders.contains(l));
+        let batch = if is_blocked_leader_slot {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .filter(|payload| !payload.is_mev_protected())
+                .map(|payload| payload.wire_transaction())
+                .collect()
+        } else {
+            transaction_batch
+                .into_iter()
+                .filter_map(TpuClientPayload::decode)
+                .map(|payload| payload.wire_transaction())
+                .collect()
         };
-        // convert the bytes to a boolean
-        let mev_protect = matches!(prefix_bytes.first(), Some(1));
-        let transaction_batch = TransactionBatch::new(wire_transactions.to_vec());
-        let blocked_leaders = BLOCKED_LEADERS.load().clone();
 
-        //if the current or next leader is in the blocklist don't send the transactions
-        if mev_protect {
-            if let Some(leader) = leaders.first() {
-                if blocked_leaders.contains(leader) {
-                    return Ok(());
-                }
-            }
-        }
+        let transaction_batch = TransactionBatch::new(batch);
 
         for (_, new_leader) in leaders.iter().enumerate() {
             if !workers.contains(new_leader) {
@@ -118,8 +142,55 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
 #[cfg(test)]
 pub mod test {
+    use super::MevProtectedBroadcaster;
+    use arc_swap::ArcSwap;
     use bytes::Bytes;
     use solana_tpu_client_next::transaction_batch::TransactionBatch;
+    use std::collections::HashSet;
+    use std::net::SocketAddr;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    pub async fn test_fetch_blocked_validators_from_chain() {
+        let rpc = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+            "http://rpc:8899".to_string(),
+        ));
+        let key =
+            solana_sdk::pubkey::Pubkey::from_str("4QXuzwHutRGjMHRfpGgZpaC9LEYR2wqVmLJBbPbK1zQo")
+                .unwrap();
+
+        let shield = crate::shield::YellowstoneShieldProvider::new(key, rpc);
+        let blocked_ips = shield.get_blocked_identities().await.unwrap();
+
+        // println!("Blocked validators ({} total):", blocked_ips.len());
+        for addr in &blocked_ips {
+            println!("  {addr}");
+        }
+
+        assert!(
+            !blocked_ips.is_empty(),
+            "expected at least one blocked validator"
+        );
+    }
+
+    #[test]
+    pub fn test_blocked_validators_list() {
+        let addrs: HashSet<SocketAddr> = ["127.0.0.1:8001", "127.0.0.1:8002", "192.168.1.10:9000"]
+            .iter()
+            .map(|s| SocketAddr::from_str(s).unwrap())
+            .collect();
+
+        let broadcaster = MevProtectedBroadcaster {
+            blocked_leaders: Arc::new(ArcSwap::from_pointee(addrs.clone())),
+            leader_skip_window: 4,
+        };
+
+        let loaded = broadcaster.blocked_leaders.load();
+        let listed: HashSet<SocketAddr> = loaded.iter().copied().collect();
+
+        assert_eq!(listed, addrs);
+    }
 
     #[test]
     pub fn test_mev_protect_serialization_deserialization_case_true() {

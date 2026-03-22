@@ -11,7 +11,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 
-pub async fn get_subscriber_with_otpl<Sink>(
+pub fn get_subscriber_with_otpl<Sink>(
     env_filter: EnvFilter,
     otpl_endpoint: String,
     bind_port: u16,
@@ -22,9 +22,7 @@ where
 {
     let service_name = format!(
         "iris_{}:{}",
-        get_server_public_ip()
-            .await
-            .unwrap_or(String::from("CANT_GET_IP")),
+        get_server_public_ip().unwrap_or(String::from("CANT_GET_IP")),
         bind_port
     );
     let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
@@ -91,9 +89,9 @@ struct IpResponse {
     ip: String,
 }
 
-async fn get_server_public_ip() -> Result<String, reqwest::Error> {
+fn get_server_public_ip() -> Result<String, reqwest::Error> {
     let url = "https://api.ipify.org?format=json";
-    let response = reqwest::get(url).await?;
-    let ip_data: IpResponse = response.json().await?;
+    let response = reqwest::blocking::get(url)?;
+    let ip_data: IpResponse = response.json()?;
     Ok(ip_data.ip)
 }

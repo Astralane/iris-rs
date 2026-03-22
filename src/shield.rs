@@ -102,7 +102,7 @@ impl YellowstoneShieldProvider {
         Ok(tpu_quics_addrs)
     }
 
-    async fn get_blocked_identities(&self) -> anyhow::Result<Vec<String>> {
+    pub async fn get_blocked_identities(&self) -> anyhow::Result<Vec<String>> {
         let data = self
             .rpc
             .get_account_data(&self.key)
