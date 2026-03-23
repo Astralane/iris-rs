@@ -1,3 +1,22 @@
+## Change Log 3.0 ( 20th march)
+
+### ENV variables changed
+* QUIC_BIND_ADDRESS bind address for the quic port ( make sure to whitelist this udp port in your firewall)
+* TPU_CLIENT_RT__NUM_THREADS  [OPTIONAL]
+* TPU_CLIENT_RT__CPUS [OPTIONAL]
+* RPC_RT__NUM_THREADS [OPTIONAL]
+* RPC_RT__CPUS [OPTIONAL]
+* is_colocated [OPTIONAL]
+* QUIC_RT__NUM_THREADS [OPTIONAL]
+* QUIC_RT__CPUS [OPTIONAL]
+* LOOKAHEAD_SLOTS [removed]
+
+### Summary of changes
+* **Added support of using quic protocol**
+* Added CPU core pinning and number of cores used for quic,tpu client and json rpc
+* added colocated flag so that retries are more faster.
+* Hardcoded lookahead slots 
+
 ## Change Log 2.0 ( 26th October)
 
 ### ENV variables changed
