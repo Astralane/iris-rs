@@ -9,7 +9,7 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::runtime::{build_runtime, TokioRtConfig};
+use crate::runtime::{build_current_runtime, build_runtime, TokioRtConfig};
 use clap::{Parser, Subcommand};
 use crossbeam_channel::Sender;
 use figment::providers::Env;
@@ -129,27 +129,26 @@ pub fn main() {
     let cli = Cli::parse();
     match cli.command {
         Some(CliCommand::SetIdentity { identity }) => {
-            let admin_addr = cli.admin_addr;
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build runtime");
-            rt.block_on(async move {
-                let url = format!("http://{}", admin_addr);
-                let client = HttpClientBuilder::default()
-                    .build(&url)
-                    .expect("failed to build admin RPC client");
-                client
-                    .set_identity(identity)
-                    .await
-                    .expect("set-identity failed");
-                println!("Identity updated successfully");
-            });
+            run_update_identity(cli.admin_addr, identity).expect("set-identity failed");
         }
         None => {
             run().expect("server exited with error");
         }
     }
+}
+
+fn run_update_identity(admin_addr: String, identity: std::path::PathBuf) -> anyhow::Result<()> {
+    let rt = build_current_runtime();
+    rt.block_on(async move {
+        let url = format!("http://{}", admin_addr);
+        let client = HttpClientBuilder::default().build(&url)?;
+        client
+            .set_identity(identity)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        println!("Identity updated successfully");
+        Ok(())
+    })
 }
 
 fn run() -> anyhow::Result<()> {

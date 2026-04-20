@@ -28,6 +28,14 @@ impl TokioRtConfig {
     }
 }
 
+/// Build a single-threaded `tokio::runtime::Runtime`.
+pub fn build_current_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build single-thread runtime")
+}
+
 /// Build a `tokio::runtime::Runtime` with optional CPU affinity.
 ///
 /// Each worker thread is pinned to `cpus[thread_index % cpus.len()]` in order.
