@@ -27,6 +27,7 @@ jsonrpsee = { version = "0.26.0", features = ["server", "http-client", "macros"]
 tokio = "1.40.0"
 tokio-util = "0.7.12"
 dashmap = "6.1.0"
+clap = { version = "4.6.1", features = ["derive", ] }
 bytes = "1.10.1"
 figment = { version = "0.10.19", features = ["env"] }
 serde = { version = "1.0.188", features = ["derive"] }

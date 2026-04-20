@@ -1,4 +1,5 @@
 #![warn(unused_crate_dependencies)]
+use crate::admin_rpc::{spawn_admin_rpc_server, AdminRpcClient};
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::chain_state::spawn_chain_state_updater;
 use crate::dedup_and_retry::{DedupAndRetry, DedupPacketPayload};
@@ -9,9 +10,11 @@ use crate::otel_tracer::{
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::runtime::{build_runtime, TokioRtConfig};
+use clap::{Parser, Subcommand};
 use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
+use jsonrpsee::http_client::HttpClientBuilder;
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
@@ -30,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+mod admin_rpc;
 mod broadcaster;
 mod chain_state;
 mod dedup_and_retry;
@@ -94,17 +98,66 @@ pub struct Config {
     /// how many upcoming leaders you inspect before deciding to skip sending transactions
     /// for mev protected txns
     blocked_leader_skip_window: Option<usize>,
+    /// admin rpc ledger path
+    admin_bind_port: Option<u16>,
 }
 
 const DEFAULT_BLOCK_LEADER_SKIP_WINDOW: usize = 2;
 const SLOT_RETAIN_COUNT: u64 = 800; // 4mins
+const DEFAULT_ADMIN_RPC_PORT: u16 = 1504;
 
-fn main() -> anyhow::Result<()> {
+#[derive(Parser, Debug)]
+#[clap(name = "iris")]
+struct Cli {
+    /// Admin RPC server address (host:port)
+    #[clap(short = 'l', long = "ledger", default_value = "localhost:1504")]
+    admin_addr: String,
+    #[clap(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum CliCommand {
+    /// Update the validator's identity keypair at runtime
+    SetIdentity {
+        /// Path to the keypair file (resolved on the server)
+        identity: std::path::PathBuf,
+    },
+}
+
+pub fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Some(CliCommand::SetIdentity { identity }) => {
+            let admin_addr = cli.admin_addr;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build runtime");
+            rt.block_on(async move {
+                let url = format!("http://{}", admin_addr);
+                let client = HttpClientBuilder::default()
+                    .build(&url)
+                    .expect("failed to build admin RPC client");
+                client
+                    .set_identity(identity)
+                    .await
+                    .expect("set-identity failed");
+                println!("Identity updated successfully");
+            });
+        }
+        None => {
+            run().expect("server exited with error");
+        }
+    }
+}
+
+fn run() -> anyhow::Result<()> {
+    dotenv::dotenv().ok();
     //for some reason ths is required to make rustls work
     CryptoProvider::install_default(rustls::crypto::ring::default_provider())
         .expect("Failed to install default crypto provider");
 
-    dotenv::dotenv().ok();
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     //read config from env variables
@@ -180,13 +233,22 @@ fn main() -> anyhow::Result<()> {
         config.ws_url.clone(),
         tpu_cache_config,
         config.leaders_fanout as usize,
-        config.num_connections as usize,
+        config.num_connections,
         identity_keypair,
         config.worker_channel_size,
         config.max_reconnect_attempts,
         cancel.clone(),
     )
     .expect("cannot create tpu client next");
+
+    let _admin_server = spawn_admin_rpc_server(
+        cancel.clone(),
+        SocketAddr::from((
+            [127, 0, 0, 1],
+            config.admin_bind_port.unwrap_or(DEFAULT_ADMIN_RPC_PORT),
+        )),
+        client,
+    );
 
     let (chain_state, chain_update_t_handle) = spawn_chain_state_updater(
         SLOT_RETAIN_COUNT, // around 4 mins
@@ -242,9 +304,6 @@ fn main() -> anyhow::Result<()> {
     if let Some(quic_t) = maybe_quic_server {
         quic_t.join().unwrap();
     }
-    tpu_client_rt
-        .block_on(client.shutdown())
-        .expect("cannot join tpu client");
     dedup_and_retry_t
         .join()
         .expect("dedup_and_retry thread join failed");
