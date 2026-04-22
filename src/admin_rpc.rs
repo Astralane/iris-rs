@@ -2,18 +2,18 @@ use crate::rpc_server::invalid_request;
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
+use solana_sdk::message::Address;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{EncodableKey, Keypair, Signer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use solana_sdk::message::Address;
-use solana_sdk::pubkey::Pubkey;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub struct AdminRpcImpl {
     tpu_client: solana_tpu_client_next::Client,
-    identity: Arc<RwLock<Pubkey>>
+    identity: Arc<RwLock<Pubkey>>,
 }
 #[rpc(client, server)]
 pub trait AdminRpc {
@@ -56,7 +56,10 @@ pub fn spawn_admin_rpc_server(
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let admin_rpc = AdminRpcImpl { tpu_client, identity };
+                let admin_rpc = AdminRpcImpl {
+                    tpu_client,
+                    identity,
+                };
                 let rpc = jsonrpsee::server::ServerBuilder::default()
                     .build(bind_addr)
                     .await

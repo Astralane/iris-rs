@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
+use jsonrpsee::core::__reexports::serde_json;
 use jsonrpsee::http_client::HttpClientBuilder;
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -31,7 +32,6 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use jsonrpsee::core::__reexports::serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -133,12 +133,10 @@ pub fn main() {
     let cli = Cli::parse();
     match cli.command {
         Some(CliCommand::SetIdentity { identity }) => {
-            run_update_identity(cli.admin_addr, identity).expect("set-identity failed");
+            run_update_identity(cli.admin_addr, identity).expect("set-identity failed")
         }
         Some(CliCommand::Monitor) => run_monitor(cli.admin_addr).expect("monitor failed"),
-        None => {
-            run().expect("server exited with error");
-        }
+        None => run().expect("server exited with error"),
     }
 }
 fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
