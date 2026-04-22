@@ -1,3 +1,19 @@
+## Change Log 3.1 ( 22nd april 2026)
+
+Added 2 sub command
+
+* set-identity
+* get-info
+
+set-identity is used to change the pubkey live while iris-rs is running . This is used to pull the idenitity from a vault manager and change it live
+get-info is to check what identity key iris-rs is using 
+
+### Usage example
+```
+cargo r -r -- set-identity /path/to/file/id.json
+cargo r -r -- get-info
+```
+
 ## Change Log 3.0 ( 20th march)
 
 ### ENV variables changed
