@@ -126,7 +126,7 @@ enum CliCommand {
         /// Path to the keypair file (resolved on the server)
         identity: std::path::PathBuf,
     },
-    Monitor,
+    GetInfo,
 }
 
 pub fn main() {
@@ -135,13 +135,13 @@ pub fn main() {
         Some(CliCommand::SetIdentity { identity }) => {
             run_update_identity(cli.admin_addr, identity).expect("set-identity failed")
         }
-        Some(CliCommand::Monitor) => run_monitor(cli.admin_addr).expect("monitor failed"),
+        Some(CliCommand::GetInfo) => run_get_info(cli.admin_addr).expect("monitor failed"),
         None => run().expect("server exited with error"),
     }
 }
-fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
+fn run_get_info(admin_addr: String) -> anyhow::Result<()> {
     #[derive(Serialize)]
-    struct MonitorResult {
+    struct InfoResult {
         pub identity: String,
     }
     let rt = build_current_runtime();
@@ -152,7 +152,7 @@ fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
             .get_identity()
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        let result = MonitorResult { identity };
+        let result = InfoResult { identity };
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         Ok(())
     })
