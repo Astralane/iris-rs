@@ -153,7 +153,7 @@ fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
         let result = MonitorResult { identity };
-        println!("{:?}", serde_json::to_string_pretty(&result).unwrap());
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
         Ok(())
     })
 }
