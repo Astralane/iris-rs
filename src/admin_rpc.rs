@@ -2,19 +2,25 @@ use crate::rpc_server::invalid_request;
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
-use solana_sdk::signature::{EncodableKey, Keypair};
+use solana_sdk::signature::{EncodableKey, Keypair, Signer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use solana_sdk::message::Address;
+use solana_sdk::pubkey::Pubkey;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub struct AdminRpcImpl {
-    pub(crate) tpu_client: solana_tpu_client_next::Client,
+    tpu_client: solana_tpu_client_next::Client,
+    identity: Arc<RwLock<Pubkey>>
 }
 #[rpc(client, server)]
 pub trait AdminRpc {
     #[method(name = "setIdentity")]
     async fn set_identity(&self, identity: PathBuf) -> RpcResult<()>;
+    #[method(name = "getIdentity")]
+    async fn get_identity(&self) -> RpcResult<Pubkey>;
 }
 
 #[async_trait]
@@ -25,15 +31,23 @@ impl AdminRpcServer for AdminRpcImpl {
         self.tpu_client
             .update_identity(&keypair)
             .map_err(|e| invalid_request(&format!("Failed to update identity: {}", e)))?;
+        let mut l_identity = self.identity.write().expect("Lock poisoned");
+        *l_identity = keypair.pubkey();
         Ok(())
+    }
+
+    async fn get_identity(&self) -> RpcResult<Pubkey> {
+        Ok(*self.identity.read().unwrap())
     }
 }
 
 pub fn spawn_admin_rpc_server(
+    init_identity: Address,
     cancel: CancellationToken,
     bind_addr: SocketAddr,
     tpu_client: solana_tpu_client_next::Client,
 ) -> std::thread::JoinHandle<()> {
+    let identity = Arc::new(RwLock::new(init_identity));
     std::thread::Builder::new()
         .name("admin-rpc-server".to_string())
         .spawn(move || {
@@ -42,7 +56,7 @@ pub fn spawn_admin_rpc_server(
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let admin_rpc = AdminRpcImpl { tpu_client };
+                let admin_rpc = AdminRpcImpl { tpu_client, identity };
                 let rpc = jsonrpsee::server::ServerBuilder::default()
                     .build(bind_addr)
                     .await

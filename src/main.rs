@@ -20,15 +20,18 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::message::Address;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use jsonrpsee::core::__reexports::serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -58,7 +61,7 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
-    identity_keypair_file: Option<String>,
+    identity_keypair_file: Option<PathBuf>,
     grpc_url: Option<String>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
@@ -123,6 +126,7 @@ enum CliCommand {
         /// Path to the keypair file (resolved on the server)
         identity: std::path::PathBuf,
     },
+    Monitor,
 }
 
 pub fn main() {
@@ -131,10 +135,29 @@ pub fn main() {
         Some(CliCommand::SetIdentity { identity }) => {
             run_update_identity(cli.admin_addr, identity).expect("set-identity failed");
         }
+        Some(CliCommand::Monitor) => run_monitor(cli.admin_addr).expect("monitor failed"),
         None => {
             run().expect("server exited with error");
         }
     }
+}
+fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
+    #[derive(Serialize)]
+    struct MonitorResult {
+        pub identity: Address,
+    }
+    let rt = build_current_runtime();
+    rt.block_on(async move {
+        let url = format!("http://{}", admin_addr);
+        let client = HttpClientBuilder::default().build(&url)?;
+        let identity = client
+            .get_identity()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let result = MonitorResult { identity };
+        println!("{:?}", serde_json::to_string_pretty(&result).unwrap());
+        Ok(())
+    })
 }
 
 fn run_update_identity(admin_addr: String, identity: std::path::PathBuf) -> anyhow::Result<()> {
@@ -175,6 +198,7 @@ fn run() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|file| read_keypair_file(file).ok())
         .expect("No identity keypair file");
+    let identity = identity_keypair.pubkey();
 
     let shield_policy_key = config
         .shield_policy_key
@@ -241,6 +265,7 @@ fn run() -> anyhow::Result<()> {
     .expect("cannot create tpu client next");
 
     let _admin_server = spawn_admin_rpc_server(
+        identity,
         cancel.clone(),
         SocketAddr::from((
             [127, 0, 0, 1],
