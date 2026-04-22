@@ -142,7 +142,7 @@ pub fn main() {
 fn run_monitor(admin_addr: String) -> anyhow::Result<()> {
     #[derive(Serialize)]
     struct MonitorResult {
-        pub identity: Address,
+        pub identity: String,
     }
     let rt = build_current_runtime();
     rt.block_on(async move {

@@ -20,7 +20,7 @@ pub trait AdminRpc {
     #[method(name = "setIdentity")]
     async fn set_identity(&self, identity: PathBuf) -> RpcResult<()>;
     #[method(name = "getIdentity")]
-    async fn get_identity(&self) -> RpcResult<Pubkey>;
+    async fn get_identity(&self) -> RpcResult<String>;
 }
 
 #[async_trait]
@@ -36,8 +36,9 @@ impl AdminRpcServer for AdminRpcImpl {
         Ok(())
     }
 
-    async fn get_identity(&self) -> RpcResult<Pubkey> {
-        Ok(*self.identity.read().unwrap())
+    async fn get_identity(&self) -> RpcResult<String> {
+        let id = *self.identity.read().unwrap();
+        Ok(id.to_string())
     }
 }
 
