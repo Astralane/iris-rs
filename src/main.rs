@@ -1,4 +1,5 @@
 #![warn(unused_crate_dependencies)]
+use crate::admin_rpc::{spawn_admin_rpc_server, AdminRpcClient};
 use crate::broadcaster::MevProtectedBroadcaster;
 use crate::chain_state::spawn_chain_state_updater;
 use crate::dedup_and_retry::{DedupAndRetry, DedupPacketPayload};
@@ -8,20 +9,24 @@ use crate::otel_tracer::{
 };
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
-use crate::runtime::{build_runtime, TokioRtConfig};
+use crate::runtime::{build_current_runtime, build_runtime, TokioRtConfig};
+use clap::{Parser, Subcommand};
 use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
+use jsonrpsee::core::__reexports::serde_json;
+use jsonrpsee::http_client::HttpClientBuilder;
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -30,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+mod admin_rpc;
 mod broadcaster;
 mod chain_state;
 mod dedup_and_retry;
@@ -54,7 +60,7 @@ pub struct Config {
     rpc_url: String,
     ws_url: String,
     address: SocketAddr,
-    identity_keypair_file: Option<String>,
+    identity_keypair_file: Option<PathBuf>,
     grpc_url: Option<String>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
@@ -94,17 +100,83 @@ pub struct Config {
     /// how many upcoming leaders you inspect before deciding to skip sending transactions
     /// for mev protected txns
     blocked_leader_skip_window: Option<usize>,
+    /// admin rpc ledger path
+    admin_bind_port: Option<u16>,
 }
 
 const DEFAULT_BLOCK_LEADER_SKIP_WINDOW: usize = 2;
 const SLOT_RETAIN_COUNT: u64 = 800; // 4mins
+const DEFAULT_ADMIN_RPC_PORT: u16 = 1504;
 
-fn main() -> anyhow::Result<()> {
+#[derive(Parser, Debug)]
+#[clap(name = "iris")]
+struct Cli {
+    /// Admin RPC server address (host:port)
+    #[clap(short = 'l', long = "ledger", default_value = "localhost:1504")]
+    admin_addr: String,
+    #[clap(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum CliCommand {
+    /// Update the validator's identity keypair at runtime
+    SetIdentity {
+        /// Path to the keypair file (resolved on the server)
+        identity: std::path::PathBuf,
+    },
+    GetInfo,
+}
+
+pub fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Some(CliCommand::SetIdentity { identity }) => {
+            run_update_identity(cli.admin_addr, identity).expect("set-identity failed")
+        }
+        Some(CliCommand::GetInfo) => run_get_info(cli.admin_addr).expect("monitor failed"),
+        None => run().expect("server exited with error"),
+    }
+}
+fn run_get_info(admin_addr: String) -> anyhow::Result<()> {
+    #[derive(Serialize)]
+    struct InfoResult {
+        pub identity: String,
+    }
+    let rt = build_current_runtime();
+    rt.block_on(async move {
+        let url = format!("http://{}", admin_addr);
+        let client = HttpClientBuilder::default().build(&url)?;
+        let identity = client
+            .get_identity()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let result = InfoResult { identity };
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        Ok(())
+    })
+}
+
+fn run_update_identity(admin_addr: String, identity: std::path::PathBuf) -> anyhow::Result<()> {
+    let rt = build_current_runtime();
+    rt.block_on(async move {
+        let url = format!("http://{}", admin_addr);
+        let client = HttpClientBuilder::default().build(&url)?;
+        client
+            .set_identity(identity)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        println!("Identity updated successfully");
+        Ok(())
+    })
+}
+
+fn run() -> anyhow::Result<()> {
+    dotenv::dotenv().ok();
     //for some reason ths is required to make rustls work
     CryptoProvider::install_default(rustls::crypto::ring::default_provider())
         .expect("Failed to install default crypto provider");
 
-    dotenv::dotenv().ok();
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     //read config from env variables
@@ -123,6 +195,7 @@ fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|file| read_keypair_file(file).ok())
         .expect("No identity keypair file");
+    let identity = identity_keypair.pubkey();
 
     let shield_policy_key = config
         .shield_policy_key
@@ -180,13 +253,23 @@ fn main() -> anyhow::Result<()> {
         config.ws_url.clone(),
         tpu_cache_config,
         config.leaders_fanout as usize,
-        config.num_connections as usize,
+        config.num_connections,
         identity_keypair,
         config.worker_channel_size,
         config.max_reconnect_attempts,
         cancel.clone(),
     )
     .expect("cannot create tpu client next");
+
+    let _admin_server = spawn_admin_rpc_server(
+        identity,
+        cancel.clone(),
+        SocketAddr::from((
+            [127, 0, 0, 1],
+            config.admin_bind_port.unwrap_or(DEFAULT_ADMIN_RPC_PORT),
+        )),
+        client,
+    );
 
     let (chain_state, chain_update_t_handle) = spawn_chain_state_updater(
         SLOT_RETAIN_COUNT, // around 4 mins
@@ -242,9 +325,6 @@ fn main() -> anyhow::Result<()> {
     if let Some(quic_t) = maybe_quic_server {
         quic_t.join().unwrap();
     }
-    tpu_client_rt
-        .block_on(client.shutdown())
-        .expect("cannot join tpu client");
     dedup_and_retry_t
         .join()
         .expect("dedup_and_retry thread join failed");
