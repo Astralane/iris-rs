@@ -21,7 +21,6 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::message::Address;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
