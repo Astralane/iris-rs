@@ -41,7 +41,7 @@ impl AdminRpcServer for AdminRpcImpl {
     }
 
     async fn set_identity_from_bytes(&self, identity: Vec<u8>) -> RpcResult<()> {
-        let keypair = Keypair::from_bytes(&identity)
+        let keypair = Keypair::try_from(identity.as_slice())
             .map_err(|e| invalid_request(&format!("Failed to parse keypair: {}", e)))?;
         self.tpu_client
             .update_identity(&keypair)
