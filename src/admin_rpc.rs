@@ -19,6 +19,10 @@ pub struct AdminRpcImpl {
 pub trait AdminRpc {
     #[method(name = "setIdentity")]
     async fn set_identity(&self, identity: PathBuf) -> RpcResult<()>;
+
+    #[method(name = "setIdentityFromBytes")]
+    async fn set_identity_from_bytes(&self, identity: Vec<u8>) -> RpcResult<()>;
+
     #[method(name = "getIdentity")]
     async fn get_identity(&self) -> RpcResult<String>;
 }
@@ -28,6 +32,17 @@ impl AdminRpcServer for AdminRpcImpl {
     async fn set_identity(&self, path: PathBuf) -> RpcResult<()> {
         let keypair = Keypair::read_from_file(&path)
             .map_err(|e| invalid_request(&format!("Failed to read keypair: {}", e)))?;
+        self.tpu_client
+            .update_identity(&keypair)
+            .map_err(|e| invalid_request(&format!("Failed to update identity: {}", e)))?;
+        let mut l_identity = self.identity.write().expect("Lock poisoned");
+        *l_identity = keypair.pubkey();
+        Ok(())
+    }
+
+    async fn set_identity_from_bytes(&self, identity: Vec<u8>) -> RpcResult<()> {
+        let keypair = Keypair::from_bytes(&identity)
+            .map_err(|e| invalid_request(&format!("Failed to parse keypair: {}", e)))?;
         self.tpu_client
             .update_identity(&keypair)
             .map_err(|e| invalid_request(&format!("Failed to update identity: {}", e)))?;

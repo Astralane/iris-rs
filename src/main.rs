@@ -122,8 +122,8 @@ struct Cli {
 enum CliCommand {
     /// Update the validator's identity keypair at runtime
     SetIdentity {
-        /// Path to the keypair file (resolved on the server)
-        identity: std::path::PathBuf,
+        /// Path to the keypair file [default: read JSON keypair from stdin]
+        identity: Option<std::path::PathBuf>,
     },
     GetInfo,
 }
@@ -157,15 +157,32 @@ fn run_get_info(admin_addr: String) -> anyhow::Result<()> {
     })
 }
 
-fn run_update_identity(admin_addr: String, identity: std::path::PathBuf) -> anyhow::Result<()> {
+fn run_update_identity(
+    admin_addr: String,
+    identity: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let rt = build_current_runtime();
     rt.block_on(async move {
         let url = format!("http://{}", admin_addr);
         let client = HttpClientBuilder::default().build(&url)?;
-        client
-            .set_identity(identity)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+
+        if let Some(path) = identity {
+            let path = std::fs::canonicalize(&path)?;
+            println!("New validator identity path: {}", path.display());
+            client
+                .set_identity(path)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+        } else {
+            let keypair = solana_sdk::signature::read_keypair(&mut std::io::stdin())
+                .map_err(|e| anyhow::anyhow!("Failed to read keypair from stdin: {}", e))?;
+            println!("New validator identity: {}", keypair.pubkey());
+            client
+                .set_identity_from_bytes(Vec::from(keypair.to_bytes()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
+
         println!("Identity updated successfully");
         Ok(())
     })
