@@ -16,6 +16,8 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
+const MEV_PROTECT_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
+
 bitflags! {
     #[derive(Debug, Clone, Copy)]
     pub struct BatchFlags: u8 {
@@ -113,6 +115,26 @@ pub fn spawn_tpu_client_next(
             .max_cache_size(max_cache_size)
             .broadcaster(broadcaster)
             .build()?;
+
+        let flush_sender = sender.clone();
+        let flush_cancel = cancel.child_token();
+        tpu_client_rt.spawn(async move {
+            let start = tokio::time::Instant::now() + MEV_PROTECT_FLUSH_INTERVAL;
+            let mut interval = tokio::time::interval_at(start, MEV_PROTECT_FLUSH_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = flush_cancel.cancelled() => break,
+                    _ = interval.tick() => {
+                        // An empty batch makes the broadcaster re-evaluate the current
+                        // leader window and release buffered MEV-protected transactions
+                        // as soon as it is safe.
+                        let _ = flush_sender
+                            .try_send_transactions_in_batch(Vec::<Bytes>::new());
+                    }
+                }
+            }
+        });
         Ok((TpuClientNextSender { inner: sender }, client))
     })
 }

@@ -35,7 +35,6 @@ use tracing_subscriber::EnvFilter;
 
 mod admin_rpc;
 mod broadcaster;
-mod gossip_service;
 mod http_middleware;
 mod otel_tracer;
 mod quic_server;
@@ -80,8 +79,6 @@ pub struct Config {
     /// Runtime config for the JSON-RPC server (default: 4 threads, no pinning).
     /// Env: RPC_RT__NUM_THREADS, RPC_RT__CPUS
     rpc_rt: Option<TokioRtConfig>,
-    gossip_keypair_file: Option<String>,
-    gossip_port_range: Option<(u16, u16)>,
     /// Runtime config for the QUIC server (default: 2 threads, no pinning).
     /// Env: QUIC_RT__NUM_THREADS, QUIC_RT__CPUS
     quic_rt: Option<TokioRtConfig>,
@@ -218,20 +215,6 @@ fn run() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let cancel = CancellationToken::new();
-
-    let _gossip_t = if let Some(port_range) = config.gossip_port_range {
-        let gossip_keypair = config
-            .gossip_keypair_file
-            .as_ref()
-            .and_then(|file| read_keypair_file(file).ok());
-        Some(gossip_service::spawn_gossip_service(
-            port_range,
-            gossip_keypair,
-            shutdown.clone(),
-        ))
-    } else {
-        None
-    };
 
     let rpc = Arc::new(RpcClient::new(config.rpc_url.to_owned()));
     let tpu_cache_config = LeaderTpuCacheServiceConfig {

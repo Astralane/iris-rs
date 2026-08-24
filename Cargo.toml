@@ -9,8 +9,6 @@ solana-client = "=4.2.1"
 solana-transaction-status-client-types = { version = "=4.2.1", features = ["agave-unstable-api"] }
 solana-rpc-client-api = "=4.2.1"
 agave-transaction-view = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-gossip = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-net-utils = { version = "=4.2.1", features = ["agave-unstable-api"] }
 solana-tls-utils = { version = "=4.2.1", features = ["agave-unstable-api"] }
 solana-streamer = { version = "=4.2.1", features = ["agave-unstable-api"] }
 solana-measure = { version = "=4.2.1", features = ["agave-unstable-api"] }
