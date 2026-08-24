@@ -1,8 +1,6 @@
 #![warn(unused_crate_dependencies)]
 use crate::admin_rpc::{spawn_admin_rpc_server, AdminRpcClient};
 use crate::broadcaster::MevProtectedBroadcaster;
-use crate::chain_state::spawn_chain_state_updater;
-use crate::dedup_and_retry::{DedupAndRetry, DedupPacketPayload};
 use crate::http_middleware::HttpLoggingMiddleware;
 use crate::otel_tracer::{
     get_subscriber_with_otpl, init_subscriber, init_subscriber_without_signoz,
@@ -10,8 +8,8 @@ use crate::otel_tracer::{
 use crate::rpc::IrisRpcServer;
 use crate::rpc_server::IrisRpcServerImpl;
 use crate::runtime::{build_current_runtime, build_runtime, TokioRtConfig};
+use crate::tpu_next_client::TpuClientNextSender;
 use clap::{Parser, Subcommand};
-use crossbeam_channel::Sender;
 use figment::providers::Env;
 use figment::Figment;
 use jsonrpsee::core::__reexports::serde_json;
@@ -37,8 +35,6 @@ use tracing_subscriber::EnvFilter;
 
 mod admin_rpc;
 mod broadcaster;
-mod chain_state;
-mod dedup_and_retry;
 mod gossip_service;
 mod http_middleware;
 mod otel_tracer;
@@ -47,7 +43,6 @@ mod rpc;
 mod rpc_server;
 mod runtime;
 mod shield;
-mod store;
 mod tpu_next_client;
 mod types;
 mod vendor;
@@ -61,13 +56,13 @@ pub struct Config {
     ws_url: String,
     address: SocketAddr,
     identity_keypair_file: Option<PathBuf>,
-    grpc_url: Option<String>,
     //The number of connections to be maintained by the scheduler.
     num_connections: usize,
     /// Runtime config for the TPU client (default: 2 threads, no pinning).
     /// Env: TPU_CLIENT_RT__NUM_THREADS, TPU_CLIENT_RT__CPUS
     tpu_client_rt: Option<TokioRtConfig>,
     //The size of the channel used to transmit transaction batches to the worker tasks.
+    sender_channel_size: Option<usize>,
     worker_channel_size: usize,
     //The maximum number of reconnection attempts allowed in case of connection failure.
     max_reconnect_attempts: usize,
@@ -76,7 +71,6 @@ pub struct Config {
     //allowing connections to be established with those leaders in advance.
     leaders_fanout: u8,
     prometheus_addr: SocketAddr,
-    tx_retry_interval_ms: u32,
     shield_policy_key: Option<String>,
     otpl_endpoint: Option<String>,
     /// Runtime config for the OTLP exporter (default: 1 thread, no pinning).
@@ -92,9 +86,6 @@ pub struct Config {
     /// Env: QUIC_RT__NUM_THREADS, QUIC_RT__CPUS
     quic_rt: Option<TokioRtConfig>,
     quic_bind_address: Option<SocketAddr>,
-    /// Runtime config for the chain-state updater (default: 2 threads, no pinning).
-    /// Env: CHAIN_STATE_RT__NUM_THREADS, CHAIN_STATE_RT__CPUS
-    chain_state_rt: Option<TokioRtConfig>,
     /// LAN like tuning for quic if iris is run as a colocated instance
     is_colocated: bool,
     /// how many upcoming leaders you inspect before deciding to skip sending transactions
@@ -105,7 +96,7 @@ pub struct Config {
 }
 
 const DEFAULT_BLOCK_LEADER_SKIP_WINDOW: usize = 2;
-const SLOT_RETAIN_COUNT: u64 = 800; // 4mins
+const DEFAULT_TPU_SENDER_CHANNEL_SIZE: usize = 256;
 const DEFAULT_ADMIN_RPC_PORT: u16 = 1504;
 
 #[derive(Parser, Debug)]
@@ -272,6 +263,9 @@ fn run() -> anyhow::Result<()> {
         config.leaders_fanout as usize,
         config.num_connections,
         identity_keypair,
+        config
+            .sender_channel_size
+            .unwrap_or(DEFAULT_TPU_SENDER_CHANNEL_SIZE),
         config.worker_channel_size,
         config.max_reconnect_attempts,
         cancel.clone(),
@@ -288,23 +282,6 @@ fn run() -> anyhow::Result<()> {
         client,
     );
 
-    let (chain_state, chain_update_t_handle) = spawn_chain_state_updater(
-        SLOT_RETAIN_COUNT, // around 4 mins
-        config.ws_url,
-        config.grpc_url,
-        config.chain_state_rt.unwrap_or(TokioRtConfig::threads(2)),
-    );
-
-    let (dedup_sender, dedup_receiver) = crossbeam_channel::bounded(4 * 1024);
-
-    let dedup_and_retry_t = DedupAndRetry::new(
-        tpu_sender,
-        dedup_receiver,
-        Arc::new(chain_state),
-        Duration::from_millis(config.tx_retry_interval_ms as u64),
-        cancel.clone(),
-    );
-
     let maybe_quic_server =
         if let Some((quic_rt_config, bind_addr)) = config.quic_rt.zip(config.quic_bind_address) {
             info!("running with quic server at port {bind_addr:?}");
@@ -313,7 +290,7 @@ fn run() -> anyhow::Result<()> {
                 bind_addr,
                 quic_rt_config,
                 &Keypair::new(),
-                dedup_sender.clone(),
+                tpu_sender.clone(),
                 config.is_colocated,
                 cancel.clone(),
             )?)
@@ -323,28 +300,20 @@ fn run() -> anyhow::Result<()> {
         };
 
     info!("server starting in {:?}", config.address);
-    let _rpc_t = spawn_json_rpc_server(
+    let rpc_t = spawn_json_rpc_server(
         config.rpc_rt.unwrap_or(TokioRtConfig::threads(4)),
-        dedup_sender,
+        tpu_sender,
         config.address,
         cancel.clone(),
     );
-    // Block until chain state disconnects — it is a critical component and its exit
-    // signals the whole process to shut down. The service manager will restart us.
-    info!("waiting for chain state to exit");
-    chain_update_t_handle
-        .join()
-        .expect("chain update join failed");
-    tracing::error!("chain state exited — initiating shutdown");
+    info!("waiting for JSON-RPC server to exit");
+    rpc_t.join().expect("JSON-RPC thread join failed");
+    tracing::error!("JSON-RPC server exited — initiating shutdown");
     cancel.cancel();
-    // Also signal the gossip service which uses the AtomicBool directly.
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(quic_t) = maybe_quic_server {
         quic_t.join().unwrap();
     }
-    dedup_and_retry_t
-        .join()
-        .expect("dedup_and_retry thread join failed");
     Ok(())
 }
 
@@ -374,7 +343,7 @@ fn init_tracing(config: &Config, env_filter: EnvFilter) {
 
 fn spawn_json_rpc_server(
     rt_config: TokioRtConfig,
-    dedup_sender: Sender<DedupPacketPayload>,
+    tpu_sender: TpuClientNextSender,
     bind_address: SocketAddr,
     cancel: CancellationToken,
 ) -> std::thread::JoinHandle<()> {
@@ -384,9 +353,9 @@ fn spawn_json_rpc_server(
             let rt = build_runtime("json_rpc_next_rt", &rt_config);
             let _guard = rt.enter();
             let task = async move {
-                let json_rpc = IrisRpcServerImpl::new(dedup_sender);
+                let json_rpc = IrisRpcServerImpl::new(tpu_sender);
                 let server_config = ServerConfig::builder()
-                    .max_request_body_size(4 * 1024) // 4kb
+                    .max_request_body_size(8 * 1024) // v1 transaction plus JSON/base64 overhead
                     .max_connections(10_000)
                     .set_keep_alive(Some(Duration::from_secs(60)))
                     .build();

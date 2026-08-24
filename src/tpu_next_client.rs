@@ -1,7 +1,6 @@
-use crate::types::SendTransactionClient;
 use anyhow::Context;
 use bitflags::bitflags;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use metrics::{counter, gauge};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
@@ -9,6 +8,7 @@ use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use solana_tpu_client_next::{ClientBuilder, ClientError, SendTransactionStats};
+use std::num::NonZeroUsize;
 use std::sync::{atomic, Arc};
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -25,49 +25,43 @@ bitflags! {
 
 #[derive(Clone)]
 pub struct TpuClientPayload {
-    wire_transaction: Bytes,
-    mev_protect: bool,
+    encoded: Bytes,
 }
 
 impl TpuClientPayload {
-    pub fn new(txn: Bytes, mev_protect: bool) -> TpuClientPayload {
+    pub fn new(mut wire_transaction: Vec<u8>, mev_protect: bool) -> Self {
+        let flags = if mev_protect {
+            BatchFlags::MEV_PROTECTED
+        } else {
+            BatchFlags::empty()
+        };
+        wire_transaction.push(flags.bits());
         Self {
-            wire_transaction: txn,
-            mev_protect,
+            encoded: Bytes::from(wire_transaction),
         }
     }
 
     #[inline]
     pub fn is_mev_protected(&self) -> bool {
-        self.mev_protect
+        self.encoded.last().is_some_and(|byte| {
+            BatchFlags::from_bits_truncate(*byte).contains(BatchFlags::MEV_PROTECTED)
+        })
     }
 
     #[inline]
     pub fn wire_transaction(&self) -> Bytes {
-        self.wire_transaction.clone() //clone is cheap here
+        self.encoded.slice(..self.encoded.len() - 1)
     }
 
     #[inline]
-    pub fn encode(self) -> Bytes {
-        let mut flags = BatchFlags::empty();
-        if self.mev_protect {
-            flags |= BatchFlags::MEV_PROTECTED;
-        }
-        let mut buf = BytesMut::with_capacity(self.wire_transaction.len() + 1);
-        buf.put(self.wire_transaction);
-        buf.put_u8(flags.bits());
-        buf.freeze()
+    fn into_encoded(self) -> Bytes {
+        self.encoded
     }
 
     #[inline]
-    pub fn decode(bytes: Bytes) -> Option<Self> {
-        let (flag_byte, _) = bytes.as_ref().split_last()?;
-        let flags = BatchFlags::from_bits_truncate(*flag_byte);
-        let wire_transaction = bytes.slice(..bytes.len() - 1);
-        Some(Self {
-            wire_transaction,
-            mev_protect: flags.contains(BatchFlags::MEV_PROTECTED),
-        })
+    pub fn decode(encoded: Bytes) -> Option<Self> {
+        encoded.last()?;
+        Some(Self { encoded })
     }
 }
 
@@ -76,6 +70,7 @@ pub struct TpuClientNextSender {
     inner: solana_tpu_client_next::TransactionSender,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_tpu_client_next(
     broadcaster: impl WorkersBroadcaster + 'static,
     tpu_client_rt: &Handle,
@@ -85,12 +80,15 @@ pub fn spawn_tpu_client_next(
     leader_fan_out: usize,
     num_connections: usize,
     validator_identity: Keypair,
+    sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
     cancel: CancellationToken,
 ) -> anyhow::Result<(TpuClientNextSender, solana_tpu_client_next::Client)> {
     let udp_sock =
         std::net::UdpSocket::bind("0.0.0.0:0").context("cannot bind tpu client endpoint")?;
+    let max_cache_size =
+        NonZeroUsize::new(num_connections).context("num_connections must be greater than zero")?;
 
     // Both WebsocketNodeAddressService::run and ClientBuilder::build spawn tasks
     // internally via tokio::spawn. Wrapping both in a single block_on provides
@@ -106,36 +104,26 @@ pub fn spawn_tpu_client_next(
             .runtime_handle(tpu_client_rt.clone())
             .cancel_token(cancel.child_token())
             .bind_socket(udp_sock)
-            .identity(Some(&validator_identity))
+            .identity(&validator_identity)
+            .sender_channel_size(sender_channel_size)
             .worker_channel_size(worker_channel_size)
             .metric_reporter(send_metrics_stats)
             .max_reconnect_attempts(max_reconnect_attempts)
             .leader_send_fanout(leader_fan_out)
-            .max_cache_size(num_connections)
+            .max_cache_size(max_cache_size)
             .broadcaster(broadcaster)
             .build()?;
         Ok((TpuClientNextSender { inner: sender }, client))
     })
 }
 
-impl SendTransactionClient for TpuClientNextSender {
-    fn send_transaction(&self, wire_transaction: TpuClientPayload) {
-        self.send_transaction_batch(vec![wire_transaction]);
-    }
+impl TpuClientNextSender {
+    pub fn send_transaction(&self, transaction: TpuClientPayload) {
+        counter!("iris_tx_send_to_tpu_client_next").increment(1);
+        let batch = vec![transaction.into_encoded()];
 
-    fn send_transaction_batch(&self, wire_transactions: Vec<TpuClientPayload>) {
-        counter!("iris_tx_send_to_tpu_client_next").increment(wire_transactions.len() as u64);
-        if wire_transactions.is_empty() {
-            return;
-        }
-
-        let batch = wire_transactions
-            .into_iter()
-            .map(|txn| txn.encode())
-            .collect::<Vec<_>>();
-
-        if let Err(e) = self.inner.try_send_transactions_in_batch(batch) {
-            record_send_err(e);
+        if let Err(error) = self.inner.try_send_transactions_in_batch(batch) {
+            record_send_err(error);
         } else {
             counter!("iris_tx_send_to_tpu_client_success").increment(1);
         }
@@ -221,6 +209,11 @@ async fn send_metrics_stats(stats: Arc<SendTransactionStats>, cancel: Cancellati
         gauge!("iris_tpu_client_next_connection_error_version_mismatch").set(
             stats
                 .connection_error_version_mismatch
+                .load(atomic::Ordering::Relaxed) as f64,
+        );
+        gauge!("iris_tpu_client_next_transport_congestion_events").set(
+            stats
+                .transport_congestion_events
                 .load(atomic::Ordering::Relaxed) as f64,
         );
         gauge!("iris_tpu_client_next_write_error_closed_stream").set(

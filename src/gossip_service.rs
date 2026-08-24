@@ -99,14 +99,14 @@ fn make_gossip_service(
     cluster_info.restore_contact_info(ledger_path, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS);
     let cluster_info = Arc::new(cluster_info);
 
-    let gossip_service = GossipService::new(
+    GossipService::new(
         &cluster_info,
         None,
         node.sockets.gossip.clone(),
         None,
+        None,
         true,
         None,
         exit.clone(),
-    );
-    gossip_service
+    )
 }

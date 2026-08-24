@@ -110,12 +110,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
         let transaction_batch = TransactionBatch::new(batch);
 
-        for (_, new_leader) in leaders.iter().enumerate() {
-            if !workers.contains(new_leader) {
-                warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
-                continue;
-            }
-
+        for new_leader in leaders {
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
 
@@ -131,7 +126,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
                     }
                 }
                 Err(err) => {
-                    warn!("Connection to {new_leader} was closed, worker error: {err}");
+                    debug!("Failed to send transactions to {new_leader:?}, worker error: {err}");
                     // If we have failed to send a batch, it will be dropped.
                 }
             }
@@ -204,7 +199,7 @@ pub mod test {
             panic!("cannot get back last elemenet")
         };
         let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
-        assert_eq!(true, decoded);
+        assert!(decoded);
         assert_eq!(mev_protect, &Bytes::from_static(&[1]));
         for txn in wire_transactions {
             assert_eq!(txn, &Bytes::from_static(&[0, 128]));
@@ -223,7 +218,7 @@ pub mod test {
             panic!("cannot get back last elemenet")
         };
         let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
-        assert_eq!(false, decoded);
+        assert!(!decoded);
         assert_eq!(mev_protect, &Bytes::from_static(&[0]));
         for txn in wire_transactions {
             assert_eq!(txn, &Bytes::from_static(&[0, 128]));
