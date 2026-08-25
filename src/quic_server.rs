@@ -184,6 +184,7 @@ async fn handle_uni_stream(mut stream: RecvStream, tpu_sender: TpuClientNextSend
         }
     });
     histogram!("wincode_deserialize_micros").record(micros as f64);
+    let _max_retry = packet.max_retry;
     tpu_sender.send_transaction(TpuClientPayload::new(
         packet.wire_transaction,
         packet.mev_protect,
