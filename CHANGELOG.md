@@ -1,3 +1,17 @@
+## 4.0.0 (2026-08-25)
+Upgraded to Agave 4.2.1. Transactions now go straight to the TPU client instead of passing through extra queues, and unused components
+**Config changes — remove these from your `.env`, they no longer do anything:**
+- `GRPC_URL`
+- `SKIP_CHECK_TRANSACTION_AGE`
+- `TX_RETRY_INTERVAL_MS`
+- `TX_MAX_RETRIES`
+- `LOOKAHEAD_SLOTS`
+- `USE_TPU_CLIENT_NEXT`
+- `METRICS_UPDATE_INTERVAL_SECS`
+- `DEDUP_CACHE_MAX_SIZE`
+- `gossip_keypair_file`
+- `gossip_port_range`
+
 ## Change Log 3.1 ( 22nd april 2026)
 
 Added 2 sub command
