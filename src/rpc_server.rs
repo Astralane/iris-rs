@@ -1,5 +1,6 @@
 use crate::rpc::IrisRpcServer;
 use crate::tpu_next_client::{TpuClientNextSender, TpuClientPayload};
+use crate::transaction_stats;
 use crate::vendor::solana_rpc::decode_transaction;
 use agave_transaction_view::transaction_view::TransactionView;
 use jsonrpsee::core::{async_trait, RpcResult};
@@ -41,11 +42,13 @@ impl IrisRpcServer for IrisRpcServerImpl {
     ) -> RpcResult<String> {
         counter!("iris_txn_total_transactions").increment(1);
         let mev_protect = mev_protect.unwrap_or(false);
+        transaction_stats::record_json_rpc_received(mev_protect);
         let encoding = params
             .and_then(|params| params.encoding)
             .unwrap_or(UiTransactionEncoding::Base64);
 
         let binary_encoding = encoding.into_binary_encoding().ok_or_else(|| {
+            transaction_stats::record_json_rpc_invalid();
             counter!("iris_error", "type" => "invalid_encoding").increment(1);
             invalid_request(&format!(
                 "unsupported encoding: {encoding}. Supported encodings: base58, base64"
@@ -54,6 +57,7 @@ impl IrisRpcServer for IrisRpcServerImpl {
         let wire_transaction = match decode_transaction(txn, binary_encoding) {
             Ok(wire_transaction) => wire_transaction,
             Err(e) => {
+                transaction_stats::record_json_rpc_invalid();
                 counter!("iris_error", "type" => "cannot_decode_transaction").increment(1);
                 error!("cannot decode transaction: {:?}", e);
                 return Err(e);
@@ -61,15 +65,15 @@ impl IrisRpcServer for IrisRpcServerImpl {
         };
         let tx_view =
             TransactionView::try_new_unsanitized(wire_transaction.as_ref()).map_err(|e| {
+                transaction_stats::record_json_rpc_invalid();
                 counter!("iris_error", "type" => "cannot_deserialize_transaction").increment(1);
                 error!("cannot deserialize transaction: {:?}", e);
                 invalid_request("cannot deserialize transaction")
             })?;
-        let signature = tx_view
-            .signatures()
-            .first()
-            .copied()
-            .ok_or_else(|| invalid_request("transaction has no signatures"))?;
+        let signature = tx_view.signatures().first().copied().ok_or_else(|| {
+            transaction_stats::record_json_rpc_invalid();
+            invalid_request("transaction has no signatures")
+        })?;
         self.tpu_sender
             .send_transaction(TpuClientPayload::new(wire_transaction, mev_protect));
         Ok(signature.to_string())

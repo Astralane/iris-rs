@@ -43,6 +43,7 @@ mod rpc_server;
 mod runtime;
 mod shield;
 mod tpu_next_client;
+mod transaction_stats;
 mod types;
 mod vendor;
 
@@ -85,14 +86,10 @@ pub struct Config {
     quic_bind_address: Option<SocketAddr>,
     /// LAN like tuning for quic if iris is run as a colocated instance
     is_colocated: bool,
-    /// how many upcoming leaders you inspect before deciding to skip sending transactions
-    /// for mev protected txns
-    blocked_leader_skip_window: Option<usize>,
     /// admin rpc ledger path
     admin_bind_port: Option<u16>,
 }
 
-const DEFAULT_BLOCK_LEADER_SKIP_WINDOW: usize = 2;
 const DEFAULT_TPU_SENDER_CHANNEL_SIZE: usize = 256;
 const DEFAULT_ADMIN_RPC_PORT: u16 = 1504;
 
@@ -223,19 +220,14 @@ fn run() -> anyhow::Result<()> {
         max_consecutive_failures: 10,
     };
     info!("leader updater created");
-    let (mev_protected_broadcaster, _broadcaster_jh) = MevProtectedBroadcaster::run(
-        shield_policy_key,
-        rpc.clone(),
-        cancel.clone(),
-        config
-            .blocked_leader_skip_window
-            .unwrap_or(DEFAULT_BLOCK_LEADER_SKIP_WINDOW),
-    );
+    let (mev_protected_broadcaster, _broadcaster_jh) =
+        MevProtectedBroadcaster::run(shield_policy_key, rpc.clone(), cancel.clone());
 
     let tpu_client_rt = build_runtime(
         "tpu_client_next_rt",
         &config.tpu_client_rt.unwrap_or(TokioRtConfig::threads(2)),
     );
+    tpu_client_rt.spawn(transaction_stats::report(cancel.child_token()));
 
     let (tpu_sender, client) = tpu_next_client::spawn_tpu_client_next(
         mev_protected_broadcaster,

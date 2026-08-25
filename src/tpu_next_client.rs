@@ -1,3 +1,4 @@
+use crate::transaction_stats;
 use anyhow::Context;
 use bitflags::bitflags;
 use bytes::Bytes;
@@ -145,8 +146,10 @@ impl TpuClientNextSender {
         let batch = vec![transaction.into_encoded()];
 
         if let Err(error) = self.inner.try_send_transactions_in_batch(batch) {
+            transaction_stats::record_tpu_dropped();
             record_send_err(error);
         } else {
+            transaction_stats::record_tpu_enqueued();
             counter!("iris_tx_send_to_tpu_client_success").increment(1);
         }
     }

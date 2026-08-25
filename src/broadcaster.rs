@@ -1,5 +1,6 @@
 use crate::shield::YellowstoneShieldProvider;
 use crate::tpu_next_client::TpuClientPayload;
+use crate::transaction_stats;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -21,9 +22,14 @@ use tracing::{debug, info, warn};
 
 const REFRESH_LIST_DURATION: Duration = Duration::from_secs(10 * 60); // 10 mins
 
+fn has_blocked_send_target(leaders: &[SocketAddr], blocked_leaders: &HashSet<SocketAddr>) -> bool {
+    leaders
+        .iter()
+        .any(|leader| blocked_leaders.contains(leader))
+}
+
 pub struct MevProtectedBroadcaster {
     blocked_leaders: Arc<ArcSwap<HashSet<SocketAddr>>>,
-    leader_skip_window: usize,
     buffered_transactions: Mutex<Vec<Bytes>>,
 }
 
@@ -32,7 +38,6 @@ impl MevProtectedBroadcaster {
         key: Pubkey,
         rpc: Arc<RpcClient>,
         cancel: CancellationToken,
-        leader_skip_window: usize,
     ) -> (Self, JoinHandle<()>) {
         let shield = YellowstoneShieldProvider::new(key, rpc);
         let blocked_addrs = Arc::new(ArcSwap::from_pointee(HashSet::new()));
@@ -75,7 +80,6 @@ impl MevProtectedBroadcaster {
         (
             MevProtectedBroadcaster {
                 blocked_leaders: blocked_addrs,
-                leader_skip_window,
                 buffered_transactions: Mutex::new(Vec::with_capacity(512)),
             },
             refresh_handle,
@@ -109,6 +113,7 @@ impl MevProtectedBroadcaster {
 
         if newly_buffered > 0 {
             counter!("iris_mev_protected_buffered").increment(newly_buffered);
+            transaction_stats::record_mev_buffered(newly_buffered);
         }
 
         if !is_blocked_leader_slot && !buffered.is_empty() {
@@ -117,9 +122,11 @@ impl MevProtectedBroadcaster {
             pending.append(&mut ready);
             ready = pending;
             counter!("iris_mev_protected_released").increment(released);
+            transaction_stats::record_mev_released(released);
         }
 
         gauge!("iris_mev_protected_buffer_size").set(buffered.len() as f64);
+        transaction_stats::set_mev_buffer_size(buffered.len());
         ready
     }
 }
@@ -133,11 +140,9 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         let blocked_leaders = self.blocked_leaders.load();
-        //check if current or next leader is in the block list
-        let is_blocked_leader_slot = leaders
-            .iter()
-            .take(self.leader_skip_window)
-            .any(|l| blocked_leaders.contains(l));
+        // A protected batch must not be released if any address it will be sent
+        // to belongs to a blocked leader.
+        let is_blocked_leader_slot = has_blocked_send_target(leaders, &blocked_leaders);
         let batch = self.prepare_transactions(transaction_batch, is_blocked_leader_slot);
 
         if batch.is_empty() {
@@ -173,7 +178,7 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 
 #[cfg(test)]
 pub mod test {
-    use super::MevProtectedBroadcaster;
+    use super::{has_blocked_send_target, MevProtectedBroadcaster};
     use arc_swap::ArcSwap;
     use bytes::Bytes;
     use solana_tpu_client_next::transaction_batch::TransactionBatch;
@@ -214,7 +219,6 @@ pub mod test {
 
         let broadcaster = MevProtectedBroadcaster {
             blocked_leaders: Arc::new(ArcSwap::from_pointee(addrs.clone())),
-            leader_skip_window: 4,
             buffered_transactions: std::sync::Mutex::new(Vec::new()),
         };
 
@@ -225,10 +229,21 @@ pub mod test {
     }
 
     #[test]
+    fn detects_blocked_target_anywhere_in_send_fanout() {
+        let leaders = [
+            SocketAddr::from_str("127.0.0.1:8001").unwrap(),
+            SocketAddr::from_str("127.0.0.1:8002").unwrap(),
+            SocketAddr::from_str("127.0.0.1:8003").unwrap(),
+        ];
+        let blocked = HashSet::from([leaders[2]]);
+
+        assert!(has_blocked_send_target(&leaders, &blocked));
+    }
+
+    #[test]
     fn test_mev_protected_transactions_are_buffered_until_safe() {
         let broadcaster = MevProtectedBroadcaster {
             blocked_leaders: Arc::new(ArcSwap::from_pointee(HashSet::new())),
-            leader_skip_window: 2,
             buffered_transactions: std::sync::Mutex::new(Vec::new()),
         };
         let ready = broadcaster.prepare_transactions(

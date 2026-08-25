@@ -1,5 +1,6 @@
 use crate::runtime::{build_runtime, TokioRtConfig};
 use crate::tpu_next_client::{TpuClientNextSender, TpuClientPayload};
+use crate::transaction_stats;
 use crate::types::TransactionPacket;
 use metrics::{counter, histogram};
 use pem::Pem;
@@ -174,16 +175,19 @@ async fn handle_uni_stream(mut stream: RecvStream, tpu_sender: TpuClientNextSend
     };
 
     histogram!("quic_packet_data_size").record(data.len() as f64);
+    transaction_stats::record_quic_received();
 
     let (packet, micros) = measure_us!(match wincode::deserialize::<TransactionPacket>(&data) {
         Ok(packet) => packet,
         Err(err) => {
+            transaction_stats::record_quic_invalid();
             error!("cannot decode packet {err:?}");
             counter!("quic_txn_decode_error").increment(1);
             return;
         }
     });
     histogram!("wincode_deserialize_micros").record(micros as f64);
+    transaction_stats::record_quic_mev_protected(packet.mev_protect);
     let _max_retry = packet.max_retry;
     tpu_sender.send_transaction(TpuClientPayload::new(
         packet.wire_transaction,
