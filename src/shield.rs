@@ -161,8 +161,8 @@ pub mod test {
                 .unwrap();
         let provider = super::YellowstoneShieldProvider::new(key, rpc_provider);
         let identities = provider.get_blocked_identities().await.unwrap();
-        assert_eq!(identities.len() > 0, true);
+        assert!(!identities.is_empty());
         let addresses = provider.get_blocked_ips().await.unwrap();
-        assert_eq!(addresses.len() > 0, true);
+        assert!(!addresses.is_empty());
     }
 }

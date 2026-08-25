@@ -1,7 +1,7 @@
-use crate::dedup_and_retry::DedupPacketPayload;
 use crate::runtime::{build_runtime, TokioRtConfig};
-use crate::types::{PacketSource, TransactionPacket};
-use crossbeam_channel::Sender;
+use crate::tpu_next_client::{TpuClientNextSender, TpuClientPayload};
+use crate::transaction_stats;
+use crate::types::TransactionPacket;
 use metrics::{counter, histogram};
 use pem::Pem;
 use quinn::crypto::rustls::QuicServerConfig;
@@ -11,9 +11,9 @@ use quinn::{
 };
 use rustls::KeyLogFile;
 use solana_measure::measure_us;
+use solana_message::v1::MAX_TRANSACTION_SIZE;
 use solana_sdk::signature::Keypair;
 use solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID;
-use solana_streamer::packet::PACKET_DATA_SIZE;
 use solana_streamer::quic::{QuicServerError, QUIC_MAX_TIMEOUT};
 use solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder};
 use std::net::SocketAddr;
@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-const QUIC_MAX_SIZE: usize = 2 * PACKET_DATA_SIZE;
+const QUIC_MAX_SIZE: usize = MAX_TRANSACTION_SIZE + 64;
 
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
@@ -84,7 +84,7 @@ pub fn spawn_new(
     bind_addr: SocketAddr,
     rt_config: TokioRtConfig,
     identity_keypair: &Keypair,
-    dedup_sender: Sender<DedupPacketPayload>,
+    tpu_sender: TpuClientNextSender,
     is_colo: bool,
     cancel: CancellationToken,
 ) -> anyhow::Result<JoinHandle<()>> {
@@ -97,7 +97,7 @@ pub fn spawn_new(
         .spawn(move || {
             rt.block_on(async move {
                 let endpoint = Endpoint::server(config, bind_addr).expect("cannot create endpoint");
-                quic_server_loop(endpoint, dedup_sender, cancel).await
+                quic_server_loop(endpoint, tpu_sender, cancel).await
             })
         })
         .unwrap();
@@ -106,7 +106,7 @@ pub fn spawn_new(
 
 async fn quic_server_loop(
     endpoint: Endpoint,
-    dedup_sender: Sender<DedupPacketPayload>,
+    tpu_sender: TpuClientNextSender,
     cancel: CancellationToken,
 ) {
     info!("quic server loop starting");
@@ -120,7 +120,7 @@ async fn quic_server_loop(
                     info!("got quic connection from {:?}", incoming.remote_address());
                     match incoming.accept() {
                         Ok(connecting) => {
-                            tokio::spawn(handle_connection(connecting, dedup_sender.clone()));
+                            tokio::spawn(handle_connection(connecting, tpu_sender.clone()));
                         }
                         Err(err) => {
                             error!("quic server incoming conn error: {}", err);
@@ -133,7 +133,7 @@ async fn quic_server_loop(
     }
 }
 
-async fn handle_connection(connecting: Connecting, dedup_sender: Sender<DedupPacketPayload>) {
+async fn handle_connection(connecting: Connecting, tpu_sender: TpuClientNextSender) {
     let conn = match connecting.await {
         Ok(conn) => conn,
         Err(e) => {
@@ -153,11 +153,11 @@ async fn handle_connection(connecting: Connecting, dedup_sender: Sender<DedupPac
                 break;
             }
         };
-        tokio::task::spawn(handle_uni_stream(stream, dedup_sender.clone()));
+        tokio::task::spawn(handle_uni_stream(stream, tpu_sender.clone()));
     }
 }
 
-async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPacketPayload>) {
+async fn handle_uni_stream(mut stream: RecvStream, tpu_sender: TpuClientNextSender) {
     let now = Instant::now();
     const READ_TIMEOUT: Duration = Duration::from_secs(2);
     let data = match tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(QUIC_MAX_SIZE)).await {
@@ -175,20 +175,24 @@ async fn handle_uni_stream(mut stream: RecvStream, dedup_sender: Sender<DedupPac
     };
 
     histogram!("quic_packet_data_size").record(data.len() as f64);
+    transaction_stats::record_quic_received();
 
     let (packet, micros) = measure_us!(match wincode::deserialize::<TransactionPacket>(&data) {
         Ok(packet) => packet,
         Err(err) => {
+            transaction_stats::record_quic_invalid();
             error!("cannot decode packet {err:?}");
             counter!("quic_txn_decode_error").increment(1);
             return;
         }
     });
     histogram!("wincode_deserialize_micros").record(micros as f64);
-    if let Err(e) = dedup_sender.try_send((packet, Instant::now(), PacketSource::Quic)) {
-        error!("cannot send from quic-server to dedup {e:?}");
-        counter!("quic_to_dedup_send_err", "error" => e.to_string()).increment(1);
-    }
+    transaction_stats::record_quic_mev_protected(packet.mev_protect);
+    let _max_retry = packet.max_retry;
+    tpu_sender.send_transaction(TpuClientPayload::new(
+        packet.wire_transaction,
+        packet.mev_protect,
+    ));
     counter!("txn_quic_count").increment(1);
     histogram!("handle_uni_stream_latency").record(now.elapsed().as_micros() as f64);
 }
