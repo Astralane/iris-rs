@@ -2226,6 +2226,7 @@ dependencies = [
  "solana-tls-utils",
  "solana-tpu-client-next",
  "solana-transaction-status-client-types",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tokio-util",

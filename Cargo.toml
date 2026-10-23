@@ -28,6 +28,7 @@ figment = { version = "0.10.19", features = ["env"] }
 serde = { version = "1.0.188", features = ["derive"] }
 anyhow = "1.0.91"
 tracing = "0.1.40"
+thiserror = "2.0.21"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"
 base64 = "0.22.1"

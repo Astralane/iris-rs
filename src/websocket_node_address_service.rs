@@ -7,7 +7,8 @@ use solana_tpu_client_next::{
     leader_updater::LeaderUpdater,
     node_address_service::{LeaderTpuCacheServiceConfig, NodeAddressService, SlotEvent},
 };
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use thiserror::Error;
 use tokio::{
     sync::mpsc::{self, error::SendTimeoutError, Sender},
     task::JoinHandle,
@@ -132,26 +133,13 @@ async fn run_websocket_subscription(
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 enum NotificationError {
+    #[error("slot-update websocket subscription ended")]
     Closed,
+    #[error("slot-update websocket received no events for {0:?}")]
     Stalled(Duration),
 }
-
-impl fmt::Display for NotificationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Closed => formatter.write_str("slot-update websocket subscription ended"),
-            Self::Stalled(timeout) => write!(
-                formatter,
-                "slot-update websocket received no events for {} seconds",
-                timeout.as_secs()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for NotificationError {}
 
 async fn next_notification<S, T>(
     notifications: &mut S,
