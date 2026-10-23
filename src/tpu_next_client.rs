@@ -1,4 +1,5 @@
 use crate::transaction_stats;
+use crate::websocket_node_address_service::FailFastWebsocketNodeAddressService;
 use anyhow::Context;
 use bitflags::bitflags;
 use bytes::Bytes;
@@ -7,7 +8,6 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
 use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
 use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
-use solana_tpu_client_next::websocket_node_address_service::WebsocketNodeAddressService;
 use solana_tpu_client_next::{ClientBuilder, ClientError, SendTransactionStats};
 use std::num::NonZeroUsize;
 use std::sync::{atomic, Arc};
@@ -98,10 +98,14 @@ pub fn spawn_tpu_client_next(
     // the async context they need without a separate enter() guard (which would
     // conflict with block_on's own context setup).
     tpu_client_rt.block_on(async {
-        let leader_updater =
-            WebsocketNodeAddressService::run(rpc.clone(), ws_url, tpu_cache_config, cancel.clone())
-                .await
-                .context("cannot create leader updater")?;
+        let leader_updater = FailFastWebsocketNodeAddressService::run(
+            rpc.clone(),
+            ws_url,
+            tpu_cache_config,
+            cancel.clone(),
+        )
+        .await
+        .context("cannot create leader updater")?;
 
         let (sender, client) = ClientBuilder::new(Box::new(leader_updater))
             .runtime_handle(tpu_client_rt.clone())

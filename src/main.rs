@@ -46,6 +46,7 @@ mod tpu_next_client;
 mod transaction_stats;
 mod types;
 mod vendor;
+mod websocket_node_address_service;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
