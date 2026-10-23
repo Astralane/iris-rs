@@ -4,22 +4,23 @@ version = "4.0.0"
 edition = "2021"
 
 [dependencies]
-solana-tpu-client-next = { version = "=4.2.1", features = ["agave-unstable-api", "websocket-node-address-service"] }
-solana-client = "=4.2.1"
-solana-transaction-status-client-types = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-rpc-client-api = "=4.2.1"
-agave-transaction-view = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-tls-utils = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-streamer = { version = "=4.2.1", features = ["agave-unstable-api"] }
-solana-measure = { version = "=4.2.1", features = ["agave-unstable-api"] }
+solana-tpu-client-next = { version = "=4.3.2", features = ["agave-unstable-api", "websocket-node-address-service"] }
+solana-client = "=4.3.2"
+solana-transaction-status-client-types = { version = "=4.3.2", features = ["agave-unstable-api"] }
+solana-rpc-client-api = "=4.3.2"
+agave-transaction-view = "=6.0.0"
+solana-tls-utils = { version = "=4.3.2", features = ["agave-unstable-api"] }
+solana-streamer = { version = "=4.3.2", features = ["agave-unstable-api"] }
+solana-measure = { version = "=4.3.2", features = ["agave-unstable-api"] }
 
 solana-sdk = "4.0.1"
-solana-message = "4.2.3"
-solana-packet = "4.2.0"
+solana-message = "=4.5.0"
+solana-packet = "=4.3.0"
 
 pem = "1.1.1"
 jsonrpsee = { version = "0.26.0", features = ["server", "http-client", "macros"] }
 tokio = "1.40.0"
+tokio-stream = "0.1.19"
 tokio-util = "0.7.12"
 clap = { version = "4.6.1", features = ["derive", ] }
 bytes = "1.10.1"
@@ -27,6 +28,7 @@ figment = { version = "0.10.19", features = ["env"] }
 serde = { version = "1.0.188", features = ["derive"] }
 anyhow = "1.0.91"
 tracing = "0.1.40"
+thiserror = "2.0.21"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"
 base64 = "0.22.1"
@@ -35,6 +37,7 @@ metrics-exporter-prometheus = "0.18.1"
 rustls = { version = "0.23.17", features = ["ring"] }
 arc-swap = "1.7.1"
 async-trait = "0.1.88"
+futures-util = "0.3.34"
 borsh = "1.5.7"
 opentelemetry = { version = "0.30.0" }
 opentelemetry-otlp = { version = "0.30.0", features = ["default", "grpc-tonic"] }
@@ -46,7 +49,7 @@ reqwest = "0.12.19"
 tower = "0.5.2"
 chrono = "0.4.42"
 mimalloc = "0.1.48"
-quinn = { version = "0.11.9", features = ["ring"] }
+quinn = { package = "anza-quinn", version = "=0.11.11-rustsec20260339", features = ["ring"] }
 wincode = { version = "0.4.4", features = ["derive"] }
 bitflags = { version = "2.11.0" }
 core_affinity = "0.8"

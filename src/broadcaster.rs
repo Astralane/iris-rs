@@ -8,9 +8,8 @@ use metrics::{counter, gauge};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_tpu_client_next::connection_workers_scheduler::WorkersBroadcaster;
-use solana_tpu_client_next::transaction_batch::TransactionBatch;
 use solana_tpu_client_next::workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError};
-use solana_tpu_client_next::ConnectionWorkersSchedulerError;
+use solana_tpu_client_next::{ConnectionWorkersSchedulerError, WireTransaction};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -88,7 +87,7 @@ impl MevProtectedBroadcaster {
 
     fn prepare_transactions(
         &self,
-        transaction_batch: TransactionBatch,
+        encoded: WireTransaction,
         is_blocked_leader_slot: bool,
     ) -> Vec<Bytes> {
         let mut buffered = self
@@ -98,14 +97,11 @@ impl MevProtectedBroadcaster {
         let mut ready = Vec::new();
         let mut newly_buffered = 0u64;
 
-        for encoded in transaction_batch {
-            let Some(payload) = TpuClientPayload::decode(encoded) else {
-                continue;
-            };
+        if let Some(payload) = TpuClientPayload::decode(encoded) {
             let wire_transaction = payload.wire_transaction();
             if is_blocked_leader_slot && payload.is_mev_protected() {
                 buffered.push(wire_transaction);
-                newly_buffered += 1;
+                newly_buffered = 1;
             } else {
                 ready.push(wire_transaction);
             }
@@ -137,38 +133,38 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         let blocked_leaders = self.blocked_leaders.load();
         // A protected batch must not be released if any address it will be sent
         // to belongs to a blocked leader.
         let is_blocked_leader_slot = has_blocked_send_target(leaders, &blocked_leaders);
-        let batch = self.prepare_transactions(transaction_batch, is_blocked_leader_slot);
+        let transactions = self.prepare_transactions(transaction, is_blocked_leader_slot);
 
-        if batch.is_empty() {
+        if transactions.is_empty() {
             return Ok(());
         }
 
-        let transaction_batch = TransactionBatch::new(batch);
+        for transaction in transactions {
+            for new_leader in leaders {
+                let send_res =
+                    workers.try_send_transaction_to_address(new_leader, transaction.clone());
 
-        for new_leader in leaders {
-            let send_res =
-                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
-
-            match send_res {
-                Ok(()) => (),
-                Err(WorkersCacheError::ShutdownError) => {
-                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                }
-                Err(WorkersCacheError::ReceiverDropped) => {
-                    // Remove the worker from the cache if the peer has disconnected.
-                    if let Some(pop_worker) = workers.pop(*new_leader) {
-                        shutdown_worker(pop_worker)
+                match send_res {
+                    Ok(()) => (),
+                    Err(WorkersCacheError::ShutdownError) => {
+                        debug!("Connection to {new_leader} was closed, worker cache shutdown");
                     }
-                }
-                Err(err) => {
-                    debug!("Failed to send transactions to {new_leader:?}, worker error: {err}");
-                    // If we have failed to send a batch, it will be dropped.
+                    Err(WorkersCacheError::ReceiverDropped) => {
+                        // Remove the worker from the cache if the peer has disconnected.
+                        if let Some(pop_worker) = workers.pop(*new_leader) {
+                            shutdown_worker(pop_worker)
+                        }
+                    }
+                    Err(err) => {
+                        debug!("Failed to send transaction to {new_leader:?}, worker error: {err}");
+                        // If we have failed to send a transaction, it will be dropped.
+                    }
                 }
             }
         }
@@ -179,9 +175,9 @@ impl WorkersBroadcaster for MevProtectedBroadcaster {
 #[cfg(test)]
 pub mod test {
     use super::{has_blocked_send_target, MevProtectedBroadcaster};
+    use crate::tpu_next_client::TpuClientPayload;
     use arc_swap::ArcSwap;
     use bytes::Bytes;
-    use solana_tpu_client_next::transaction_batch::TransactionBatch;
     use std::collections::HashSet;
     use std::net::SocketAddr;
     use std::str::FromStr;
@@ -246,20 +242,16 @@ pub mod test {
             blocked_leaders: Arc::new(ArcSwap::from_pointee(HashSet::new())),
             buffered_transactions: std::sync::Mutex::new(Vec::new()),
         };
-        let ready = broadcaster.prepare_transactions(
-            TransactionBatch::new(vec![vec![1, 2, 3, 1], vec![4, 5, 6, 0]]),
-            true,
-        );
-        assert_eq!(ready, vec![Bytes::from_static(&[4, 5, 6])]);
+        let ready = broadcaster.prepare_transactions(Bytes::from_static(&[1, 2, 3, 1]), true);
+        assert!(ready.is_empty());
         assert_eq!(broadcaster.buffered_transactions.lock().unwrap().len(), 1);
 
-        let ready =
-            broadcaster.prepare_transactions(TransactionBatch::new(vec![vec![1, 2, 3, 1]]), false);
+        let ready = broadcaster.prepare_transactions(Bytes::from_static(&[4, 5, 6, 0]), false);
         assert_eq!(
             ready,
             vec![
                 Bytes::from_static(&[1, 2, 3]),
-                Bytes::from_static(&[1, 2, 3]),
+                Bytes::from_static(&[4, 5, 6]),
             ]
         );
         assert!(broadcaster.buffered_transactions.lock().unwrap().is_empty());
@@ -267,39 +259,15 @@ pub mod test {
 
     #[test]
     pub fn test_mev_protect_serialization_deserialization_case_true() {
-        let test_transaction = [0u8, 128].to_vec();
-        let wire_transaction: Vec<Vec<u8>> = vec![test_transaction, vec![true as u8]];
-        let txn_batch = TransactionBatch::new(wire_transaction);
-        let batch_iter = txn_batch.into_iter();
-
-        let Some((mev_protect, wire_transactions)) = batch_iter.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            panic!("cannot get back last elemenet")
-        };
-        let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
-        assert!(decoded);
-        assert_eq!(mev_protect, &Bytes::from_static(&[1]));
-        for txn in wire_transactions {
-            assert_eq!(txn, &Bytes::from_static(&[0, 128]));
-        }
+        let payload = TpuClientPayload::decode(Bytes::from_static(&[0, 128, 1])).unwrap();
+        assert!(payload.is_mev_protected());
+        assert_eq!(payload.wire_transaction(), Bytes::from_static(&[0, 128]));
     }
 
     #[test]
     pub fn test_mev_protect_serialization_deserialization_case_false() {
-        let test_transaction = [0u8, 128].to_vec();
-        let wire_transaction: Vec<Vec<u8>> = vec![test_transaction, vec![false as u8]];
-        let txn_batch = TransactionBatch::new(wire_transaction);
-        let batch_iter = txn_batch.into_iter();
-
-        let Some((mev_protect, wire_transactions)) = batch_iter.as_slice().split_last() else {
-            // nothing in the slice, nothing to send
-            panic!("cannot get back last elemenet")
-        };
-        let decoded = mev_protect.first().map(|b| *b == 1).unwrap_or(false);
-        assert!(!decoded);
-        assert_eq!(mev_protect, &Bytes::from_static(&[0]));
-        for txn in wire_transactions {
-            assert_eq!(txn, &Bytes::from_static(&[0, 128]));
-        }
+        let payload = TpuClientPayload::decode(Bytes::from_static(&[0, 128, 0])).unwrap();
+        assert!(!payload.is_mev_protected());
+        assert_eq!(payload.wire_transaction(), Bytes::from_static(&[0, 128]));
     }
 }
