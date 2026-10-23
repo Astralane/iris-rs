@@ -130,7 +130,7 @@ impl YellowstoneShieldProvider {
         if matches!(strategy, PermissionStrategy::Allow) {
             return Err(anyhow::anyhow!(
                 "Shield policy for key {} is set to Allow, which is not supported",
-                &self.key,
+                self.key,
             ));
         };
 

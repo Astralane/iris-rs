@@ -131,7 +131,7 @@ pub fn spawn_tpu_client_next(
                         // leader window and release buffered MEV-protected transactions
                         // as soon as it is safe.
                         let _ = flush_sender
-                            .try_send_transactions_in_batch(Vec::<Bytes>::new());
+                            .try_send_transaction(Bytes::new());
                     }
                 }
             }
@@ -143,9 +143,7 @@ pub fn spawn_tpu_client_next(
 impl TpuClientNextSender {
     pub fn send_transaction(&self, transaction: TpuClientPayload) {
         counter!("iris_tx_send_to_tpu_client_next").increment(1);
-        let batch = vec![transaction.into_encoded()];
-
-        if let Err(error) = self.inner.try_send_transactions_in_batch(batch) {
+        if let Err(error) = self.inner.try_send_transaction(transaction.into_encoded()) {
             transaction_stats::record_tpu_dropped();
             record_send_err(error);
         } else {
